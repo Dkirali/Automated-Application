@@ -10,6 +10,8 @@ from db.database import (
     update_application, insert_application
 )
 
+from engine.resume import tailor_resume
+
 load_dotenv()
 app = Flask(__name__)
 RESUMES_DIR = Path("resumes")
@@ -163,7 +165,6 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
 
             # Tailor resume with Claude
             try:
-                from engine.resume import tailor_resume
                 master_path = get_config("master_resume_path")
                 result = tailor_resume(app_id, job.get("job_description", ""), master_path)
                 update_application(
