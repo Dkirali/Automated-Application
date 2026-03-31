@@ -1,0 +1,78 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f8f9fa;
+  color: #2d3436;
+  font-size: 14px;
+}
+
+.container { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
+
+h1 { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+.subtitle { color: #868e96; margin-bottom: 24px; }
+
+.setup-form { display: flex; flex-direction: column; gap: 16px; max-width: 480px; }
+.setup-form label { display: flex; flex-direction: column; gap: 6px; font-weight: 500; }
+.setup-form input {
+  padding: 10px 12px; border: 1px solid #dee2e6; border-radius: 6px;
+  font-size: 14px; outline: none;
+}
+.setup-form input:focus { border-color: #6c5ce7; }
+
+.btn-primary {
+  background: #6c5ce7; color: white; border: none;
+  padding: 10px 20px; border-radius: 6px; font-size: 14px;
+  font-weight: 600; cursor: pointer; width: fit-content;
+}
+.btn-primary:hover { background: #5a4bd1; }
+
+.alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+.alert-error { background: #fff5f5; color: #c0392b; border: 1px solid #fab8b8; }
+.alert-warning { background: #fff9f0; color: #e67e22; border: 1px solid #fdd8a0; }
+
+.stats-row {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px;
+}
+.stat-card {
+  background: white; border: 1px solid #dee2e6; border-radius: 8px;
+  padding: 16px; text-align: center;
+}
+.stat-card .number { font-size: 28px; font-weight: 700; color: #6c5ce7; }
+.stat-card .label { font-size: 12px; color: #868e96; margin-top: 4px; }
+
+.card-list { display: flex; flex-direction: column; gap: 8px; }
+.app-card {
+  background: white; border: 1px solid #dee2e6; border-radius: 8px;
+  padding: 14px 16px; display: flex; justify-content: space-between;
+  align-items: center; cursor: pointer; text-decoration: none; color: inherit;
+}
+.app-card:hover { border-color: #6c5ce7; }
+
+.badge {
+  padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;
+}
+.badge-applied { background: #d4edda; color: #155724; }
+.badge-manual  { background: #fff3cd; color: #856404; }
+.badge-failed  { background: #f8d7da; color: #721c24; }
+
+.controls { display: flex; gap: 10px; align-items: center; margin-bottom: 24px; }
+.btn-start { background: #20bf6b; color: white; border: none; padding: 10px 24px;
+  border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 14px; }
+.btn-stop  { background: #e74c3c; color: white; border: none; padding: 10px 24px;
+  border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 14px; }
+
+.section-title { font-size: 12px; font-weight: 700; color: #868e96;
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.detail-panel {
+  background: white; border: 1px solid #dee2e6; border-radius: 8px; padding: 16px;
+}
+.detail-panel h3 { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+.keyword-job  { background: #fff3cd; padding: 1px 3px; border-radius: 2px; }
+.keyword-match { background: #d4edda; padding: 1px 3px; border-radius: 2px; }
+.ats-badge {
+  display: inline-block; background: #d4edda; color: #155724;
+  padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600;
+}
