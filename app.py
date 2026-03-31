@@ -130,7 +130,6 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
 
     seen_urls = get_seen_urls()
     apps_this_session = 0
-    consecutive_failures = 0
 
     while not stop_event.is_set():
         try:
