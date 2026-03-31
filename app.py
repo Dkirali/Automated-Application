@@ -11,6 +11,7 @@ from db.database import (
 )
 
 from engine.resume import tailor_resume
+from engine.submitter import submit_application
 
 load_dotenv()
 app = Flask(__name__)
@@ -164,6 +165,7 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
                 continue  # duplicate URL
 
             # Tailor resume with Claude
+            resume_pdf_path = None
             try:
                 master_path = get_config("master_resume_path")
                 result = tailor_resume(app_id, job.get("job_description", ""), master_path)
@@ -172,10 +174,27 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
                     ats_score=result["ats_score"],
                     resume_path=result["docx_path"]
                 )
+                resume_pdf_path = result.get("pdf_path") or result["docx_path"]
             except Exception:
                 update_application(app_id, "applied")
+
+            # Submit via Easy Apply
+            try:
+                submitted = submit_application(
+                    job_url=job["url"],
+                    pdf_path=resume_pdf_path or get_config("master_resume_path"),
+                    name=get_config("name"),
+                    email=get_config("email"),
+                    phone=get_config("phone"),
+                )
+                if not submitted:
+                    update_application(app_id, "failed")
+                    continue
+            except Exception:
+                update_application(app_id, "failed")
+                continue
+
             apps_this_session += 1
-            # Easy Apply submission wired in Task 11
 
         if not jobs:
             # No new jobs found — wait 5 minutes before re-scraping
