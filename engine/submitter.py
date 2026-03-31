@@ -46,7 +46,7 @@ def _fill_visible_fields(page: Page, phone: str, pdf_path: str):
             pass
 
     upload = page.locator("input[type='file']")
-    if upload.count() > 0 and Path(pdf_path).exists():
+    if pdf_path and upload.count() > 0 and Path(pdf_path).exists():
         try:
             upload.first.set_input_files(pdf_path)
         except Exception:
