@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>JobBot — Setup</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Welcome to JobBot</h1>
+    <p class="subtitle">Let's get you set up. This only takes a minute.</p>
+
+    {% if error %}
+      <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" enctype="multipart/form-data" class="setup-form">
+      <label>Full Name
+        <input type="text" name="name" required placeholder="Your Name">
+      </label>
+      <label>Email
+        <input type="email" name="email" required placeholder="you@email.com">
+      </label>
+      <label>Phone
+        <input type="tel" name="phone" required placeholder="+90 555 000 0000">
+      </label>
+      <label>Claude API Key
+        <input type="password" name="api_key" required placeholder="sk-ant-...">
+      </label>
+      <label>Master Resume (.docx)
+        <input type="file" name="resume" accept=".docx" required>
+      </label>
+      <button type="submit" class="btn-primary">Save & Continue</button>
+    </form>
+  </div>
+</body>
+</html>

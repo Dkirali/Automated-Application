@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>JobBot</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>JobBot</h1>
+
+    {% if alert %}
+      <div class="alert alert-warning">⚠ {{ alert }}</div>
+    {% endif %}
+
+    <div class="controls">
+      <form method="POST" action="/campaign/start">
+        <input type="text" name="titles" placeholder="Product Manager, Ops Manager" required
+               style="width:260px;padding:9px 12px;border:1px solid #dee2e6;border-radius:6px;">
+        <input type="text" name="locations" placeholder="Istanbul, Remote"
+               style="width:160px;padding:9px 12px;border:1px solid #dee2e6;border-radius:6px;">
+        <button type="submit" class="btn-start">▶ Start</button>
+      </form>
+      <form method="POST" action="/campaign/stop">
+        <button type="submit" class="btn-stop">■ Stop</button>
+      </form>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="number">{{ stats.applied }}</div>
+        <div class="label">Applied</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">{{ stats.manual }}</div>
+        <div class="label">Manual Needed</div>
+      </div>
+      <div class="stat-card">
+        <div class="number" style="color: {% if stats.status == 'running' %}#20bf6b{% else %}#868e96{% endif %}">
+          {{ stats.status | upper }}
+        </div>
+        <div class="label">Status</div>
+      </div>
+    </div>
+
+    <div class="section-title">Applications</div>
+    <div class="card-list">
+      {% for app in applications %}
+        <a class="app-card" href="/application/{{ app.id }}">
+          <div>
+            <strong>{{ app.title }}</strong> · {{ app.company }}
+            <span style="color:#868e96;margin-left:8px;">{{ app.location }}</span>
+          </div>
+          <span class="badge badge-{{ app.status }}">
+            {% if app.status == 'applied' %}✓ Applied
+            {% elif app.status == 'failed' %}✗ Failed
+            {% endif %}
+          </span>
+        </a>
+      {% else %}
+        <p style="color:#868e96;">No applications yet. Start a campaign above.</p>
+      {% endfor %}
+    </div>
+
+    {% if manual_queue %}
+      <div class="section-title" style="margin-top:24px;">Manual Queue</div>
+      <div class="card-list">
+        {% for job in manual_queue %}
+          <div class="app-card" style="cursor:default;">
+            <div>
+              <strong>{{ job.title }}</strong> · {{ job.company }}
+              <span style="color:#868e96;margin-left:8px;">{{ job.location }}</span>
+            </div>
+            <a href="{{ job.url }}" target="_blank" class="badge badge-manual">⚠ Apply Manually</a>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>
