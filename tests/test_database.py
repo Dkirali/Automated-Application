@@ -1,5 +1,5 @@
 import pytest
-from jobbot.db.database import init_db, get_conn, set_config, get_config, is_setup_complete
+from db.database import init_db, get_conn, set_config, get_config, is_setup_complete
 
 def test_init_db_creates_tables():
     init_db()
