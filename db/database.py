@@ -82,7 +82,7 @@ def create_campaign(name: str, titles: str, locations: str) -> int:
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO campaigns (name, titles, locations, status, started_at) VALUES (?,?,?,'running',?)",
-            (name, titles, locations, datetime.datetime.utcnow().isoformat())
+            (name, titles, locations, datetime.datetime.now(datetime.timezone.utc).isoformat())
         )
         return cur.lastrowid
 
@@ -90,7 +90,7 @@ def update_campaign_status(campaign_id: int, status: str, stop_reason: str = Non
     with get_conn() as conn:
         conn.execute(
             "UPDATE campaigns SET status=?, stopped_at=?, stop_reason=? WHERE id=?",
-            (status, datetime.datetime.utcnow().isoformat(), stop_reason, campaign_id)
+            (status, datetime.datetime.now(datetime.timezone.utc).isoformat(), stop_reason, campaign_id)
         )
 
 def get_active_campaign() -> dict | None:
@@ -107,7 +107,7 @@ def insert_application(campaign_id, company, title, location, url, job_descripti
                 "INSERT INTO applications (campaign_id,company,title,location,url,job_description,applied_at) "
                 "VALUES (?,?,?,?,?,?,?)",
                 (campaign_id, company, title, location, url, job_description,
-                 datetime.datetime.utcnow().isoformat())
+                 datetime.datetime.now(datetime.timezone.utc).isoformat())
             )
             return cur.lastrowid
         except sqlite3.IntegrityError:
@@ -120,7 +120,7 @@ def insert_manual(campaign_id, company, title, location, url, reason):
                 "INSERT INTO manual_queue (campaign_id,company,title,location,url,reason,added_at) "
                 "VALUES (?,?,?,?,?,?,?)",
                 (campaign_id, company, title, location, url, reason,
-                 datetime.datetime.utcnow().isoformat())
+                 datetime.datetime.now(datetime.timezone.utc).isoformat())
             )
         except sqlite3.IntegrityError:
             pass
@@ -149,3 +149,8 @@ def update_application(app_id: int, status: str, ats_score: int = None, resume_p
             "UPDATE applications SET status=?, ats_score=?, resume_path=? WHERE id=?",
             (status, ats_score, resume_path, app_id)
         )
+
+def get_application(app_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM applications WHERE id=?", (app_id,)).fetchone()
+        return dict(row) if row else None

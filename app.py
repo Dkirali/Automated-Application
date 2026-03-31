@@ -17,6 +17,7 @@ RESUMES_DIR = Path("resumes")
 _stop_event = threading.Event()
 _runner_thread = None
 _alert = None
+_campaign_lock = threading.Lock()
 
 
 @app.before_request
@@ -44,7 +45,11 @@ def setup():
         set_config("email", email)
         set_config("phone", phone)
         set_config("master_resume_path", str(master_path))
-        Path(".env").write_text(f"ANTHROPIC_API_KEY={api_key}\n")
+        from dotenv import dotenv_values
+        env_path = Path(".env")
+        existing = dict(dotenv_values(env_path)) if env_path.exists() else {}
+        existing["ANTHROPIC_API_KEY"] = api_key
+        env_path.write_text("\n".join(f"{k}={v}" for k, v in existing.items()) + "\n")
         return redirect(url_for("dashboard"))
 
     return render_template("setup.html", error=None)
@@ -70,26 +75,31 @@ def dashboard():
 @app.route("/campaign/start", methods=["POST"])
 def campaign_start():
     global _runner_thread, _stop_event, _alert
-    if get_active_campaign():
-        return redirect(url_for("dashboard"))
+    with _campaign_lock:
+        if get_active_campaign():
+            return redirect(url_for("dashboard"))
 
-    titles_raw = request.form.get("titles", "")
-    locations_raw = request.form.get("locations", "")
-    titles = [t.strip() for t in titles_raw.split(",") if t.strip()]
-    locations = [l.strip() for l in locations_raw.split(",") if l.strip()]
+        titles_raw = request.form.get("titles", "").strip()
+        locations_raw = request.form.get("locations", "").strip()
+        titles = [t.strip() for t in titles_raw.split(",") if t.strip()]
+        locations = [l.strip() for l in locations_raw.split(",") if l.strip()]
 
-    campaign_id = create_campaign(
-        name=titles_raw, titles=titles_raw, locations=locations_raw
-    )
+        if not titles:
+            _alert = "Please provide at least one job title."
+            return redirect(url_for("dashboard"))
 
-    _stop_event = threading.Event()
-    _alert = None
-    _runner_thread = threading.Thread(
-        target=run_campaign,
-        args=(campaign_id, titles, locations, _stop_event),
-        daemon=True
-    )
-    _runner_thread.start()
+        campaign_id = create_campaign(
+            name=titles_raw, titles=titles_raw, locations=locations_raw
+        )
+
+        _stop_event = threading.Event()
+        _alert = None
+        _runner_thread = threading.Thread(
+            target=run_campaign,
+            args=(campaign_id, titles, locations, _stop_event),
+            daemon=True
+        )
+        _runner_thread.start()
     return redirect(url_for("dashboard"))
 
 
@@ -106,12 +116,11 @@ def campaign_stop():
 
 @app.route("/application/<int:app_id>")
 def application_detail(app_id):
-    from db.database import get_conn
-    with get_conn() as conn:
-        app_row = conn.execute("SELECT * FROM applications WHERE id=?", (app_id,)).fetchone()
+    from db.database import get_application
+    app_row = get_application(app_id)
     if not app_row:
         return redirect(url_for("dashboard"))
-    return render_template("detail.html", application=dict(app_row))
+    return render_template("detail.html", application=app_row)
 
 
 def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
@@ -133,4 +142,4 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
 if __name__ == "__main__":
     init_db()
     RESUMES_DIR.mkdir(exist_ok=True)
-    app.run(debug=False, port=5000)
+    app.run(debug=False, port=int(os.environ.get("FLASK_PORT", 5001)))
