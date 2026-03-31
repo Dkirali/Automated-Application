@@ -1,4 +1,3 @@
-import time
 import random
 from pathlib import Path
 from urllib.parse import urlencode
@@ -51,43 +50,44 @@ def scrape_jobs(titles: list[str], locations: list[str], seen_urls: set, stop_ev
 
     with sync_playwright() as p:
         context = get_browser_context(p)
-        page = context.new_page()
+        try:
+            page = context.new_page()
 
-        search_url = build_search_url(titles, locations)
-        page.goto(search_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(3000)
+            search_url = build_search_url(titles, locations)
+            page.goto(search_url, wait_until="domcontentloaded")
+            page.wait_for_timeout(3000)
 
-        cards = page.locator(".job-card-container").all()
+            cards = page.locator(".job-card-container").all()
 
-        for card in cards:
-            if stop_event.is_set():
-                break
+            for card in cards:
+                if stop_event.is_set():
+                    break
 
-            try:
-                job = parse_job_card(card)
-            except Exception:
-                continue
+                try:
+                    job = parse_job_card(card)
+                except Exception:
+                    continue
 
-            if not job["url"] or job["url"] in seen_urls:
-                continue
+                if not job["url"] or job["url"] in seen_urls:
+                    continue
 
-            card.click()
-            page.wait_for_timeout(2000)
+                card.click()
+                page.wait_for_timeout(2000)
 
-            job["easy_apply"] = is_easy_apply(page)
+                job["easy_apply"] = is_easy_apply(page)
 
-            try:
-                job["job_description"] = page.locator(".jobs-description__content").inner_text()
-            except Exception:
-                job["job_description"] = ""
+                try:
+                    job["job_description"] = page.locator(".jobs-description__content").inner_text()
+                except Exception:
+                    job["job_description"] = ""
 
-            results.append(job)
-            seen_urls.add(job["url"])
+                results.append(job)
+                seen_urls.add(job["url"])
 
-            # Randomized delay: 90–120 seconds between jobs
-            delay = random.uniform(90, 120)
-            page.wait_for_timeout(delay * 1000)
-
-        context.close()
+                # Randomized delay: 90–120 seconds between jobs
+                delay = random.uniform(90, 120)
+                page.wait_for_timeout(delay * 1000)
+        finally:
+            context.close()
 
     return results
