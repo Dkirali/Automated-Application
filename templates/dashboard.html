@@ -13,6 +13,10 @@
       <div class="alert alert-warning">⚠ {{ alert }}</div>
     {% endif %}
 
+    <div id="status-bar" style="display:none;background:#f0f4ff;border:1px solid #c5d0f5;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#3d52a0;">
+      <span style="margin-right:8px;">⟳</span><span id="status-text"></span>
+    </div>
+
     <div class="controls">
       <form method="POST" action="/campaign/start">
         <input type="text" name="titles" placeholder="Product Manager, Ops Manager" required
@@ -77,5 +81,25 @@
       </div>
     {% endif %}
   </div>
+
+  <script>
+    const bar = document.getElementById('status-bar');
+    const txt = document.getElementById('status-text');
+    function pollStatus() {
+      fetch('/status')
+        .then(r => r.json())
+        .then(data => {
+          if (data.status && data.status !== 'Idle') {
+            txt.textContent = data.status;
+            bar.style.display = 'block';
+          } else {
+            bar.style.display = 'none';
+          }
+        })
+        .catch(() => {});
+    }
+    setInterval(pollStatus, 2000);
+    pollStatus();
+  </script>
 </body>
 </html>
