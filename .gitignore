@@ -1,0 +1,8 @@
+.env
+jobbot.db
+resumes/*/
+!resumes/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
