@@ -3,7 +3,7 @@ import re
 import shutil
 from pathlib import Path
 
-RESUMES_DIR = Path("resumes")
+RESUMES_DIR = Path(__file__).parent.parent / "resumes"
 
 TAILOR_PROMPT = """You are an expert resume writer specialising in ATS optimisation.
 
@@ -25,7 +25,7 @@ RESUME:
 
 
 def extract_keywords_from_response(response_text: str) -> list[str]:
-    match = re.search(r"KEYWORDS:\s*(.+)", response_text)
+    match = re.search(r"KEYWORDS:\s*([^\n]+)", response_text)
     if not match:
         return []
     return [k.strip() for k in match.group(1).split(",") if k.strip()]
@@ -33,7 +33,7 @@ def extract_keywords_from_response(response_text: str) -> list[str]:
 
 def extract_resume_from_response(response_text: str) -> str:
     match = re.search(r"RESUME:\s*\n(.*)", response_text, re.DOTALL)
-    return match.group(1).strip() if match else response_text
+    return match.group(1).strip() if match else ""
 
 
 def calculate_ats_score(keywords: list[str], resume_text: str) -> int:
@@ -77,20 +77,25 @@ def export_pdf(docx_path: Path, pdf_path: Path):
 def tailor_resume(job_id: int, job_description: str, master_resume_path: str) -> dict:
     import anthropic
     master_path = Path(master_resume_path)
+    if not master_path.exists():
+        raise FileNotFoundError(f"Master resume not found: {master_resume_path}")
     resume_text = read_docx_text(master_path)
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2048,
-        messages=[{
-            "role": "user",
-            "content": TAILOR_PROMPT.format(
-                job_description=job_description,
-                resume_text=resume_text
-            )
-        }]
-    )
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2048,
+            messages=[{
+                "role": "user",
+                "content": TAILOR_PROMPT.format(
+                    job_description=job_description,
+                    resume_text=resume_text
+                )
+            }]
+        )
+    except Exception as e:
+        raise RuntimeError(f"Claude API error: {e}") from e
 
     response_text = message.content[0].text
     keywords = extract_keywords_from_response(response_text)

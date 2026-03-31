@@ -1,5 +1,5 @@
 import pytest
-from engine.resume import extract_keywords_from_response, calculate_ats_score
+from engine.resume import extract_keywords_from_response, calculate_ats_score, extract_resume_from_response
 
 def test_extract_keywords_returns_list():
     response = "KEYWORDS: product roadmap, OKRs, stakeholder management, agile\nRESUME:\nsome text"
@@ -19,3 +19,12 @@ def test_calculate_ats_score_perfect():
     keywords = ["python", "flask"]
     resume_text = "Built python apps with flask framework."
     assert calculate_ats_score(keywords, resume_text) == 100
+
+def test_extract_resume_from_response():
+    response = "KEYWORDS: python\nRESUME:\nExperienced engineer with Python skills."
+    result = extract_resume_from_response(response)
+    assert result == "Experienced engineer with Python skills."
+
+def test_extract_resume_missing_marker():
+    result = extract_resume_from_response("some random text without marker")
+    assert result == ""
