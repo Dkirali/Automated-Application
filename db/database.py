@@ -18,55 +18,54 @@ def get_conn():
         return conn
 
 def init_db():
-    conn = get_conn()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS campaigns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            titles TEXT NOT NULL,
-            locations TEXT NOT NULL,
-            status TEXT DEFAULT 'idle',
-            started_at TEXT,
-            stopped_at TEXT,
-            stop_reason TEXT
-        );
-        CREATE TABLE IF NOT EXISTS applications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            campaign_id INTEGER,
-            company TEXT,
-            title TEXT,
-            location TEXT,
-            url TEXT UNIQUE,
-            status TEXT DEFAULT 'applied',
-            ats_score INTEGER,
-            resume_path TEXT,
-            job_description TEXT,
-            applied_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS manual_queue (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            campaign_id INTEGER,
-            company TEXT,
-            title TEXT,
-            location TEXT,
-            url TEXT UNIQUE,
-            reason TEXT,
-            added_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS config (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        );
-    """)
+    with get_conn() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS campaigns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                titles TEXT NOT NULL,
+                locations TEXT NOT NULL,
+                status TEXT DEFAULT 'idle',
+                started_at TEXT,
+                stopped_at TEXT,
+                stop_reason TEXT
+            );
+            CREATE TABLE IF NOT EXISTS applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER,
+                company TEXT,
+                title TEXT,
+                location TEXT,
+                url TEXT UNIQUE,
+                status TEXT DEFAULT 'applied',
+                ats_score INTEGER,
+                resume_path TEXT,
+                job_description TEXT,
+                applied_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS manual_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER,
+                company TEXT,
+                title TEXT,
+                location TEXT,
+                url TEXT UNIQUE,
+                reason TEXT,
+                added_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS config (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        """)
 
 def set_config(key: str, value: str):
-    conn = get_conn()
-    conn.execute(
-        "INSERT INTO config (key, value) VALUES (?, ?) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (key, value)
-    )
-    conn.commit()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO config (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value)
+        )
 
 def get_config(key: str) -> str | None:
     conn = get_conn()
@@ -75,4 +74,4 @@ def get_config(key: str) -> str | None:
 
 def is_setup_complete() -> bool:
     required = ["name", "email", "phone", "master_resume_path"]
-    return all(get_config(k) for k in required)
+    return all(get_config(k) is not None for k in required)
