@@ -130,9 +130,11 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
     """Background thread: scrape LinkedIn and queue jobs until stopped."""
     global _alert
     from engine.scraper import scrape_jobs
+    from engine.safety import StopSignal
 
     seen_urls = get_seen_urls()
     apps_this_session = 0
+    consecutive_failures = 0
 
     while not stop_event.is_set():
         try:
@@ -189,11 +191,24 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
                 )
                 if not submitted:
                     update_application(app_id, "failed")
+                    consecutive_failures += 1
+                    if consecutive_failures >= 3:
+                        update_campaign_status(campaign_id, "stopped", "repeated_failures")
+                        _alert = StopSignal.REPEATED_FAILURES.value
+                        stop_event.set()
+                        return
                     continue
             except Exception:
                 update_application(app_id, "failed")
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    update_campaign_status(campaign_id, "stopped", "repeated_failures")
+                    _alert = StopSignal.REPEATED_FAILURES.value
+                    stop_event.set()
+                    return
                 continue
 
+            consecutive_failures = 0
             apps_this_session += 1
 
         if not jobs:
