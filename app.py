@@ -26,7 +26,7 @@ _campaign_lock = threading.Lock()
 
 @app.before_request
 def setup_guard():
-    allowed = {"setup", "static"}
+    allowed = {"setup", "settings", "static"}
     if request.endpoint not in allowed and not is_setup_complete():
         return redirect(url_for("setup"))
 
@@ -69,11 +69,53 @@ def dashboard():
         "manual": len(manual),
         "status": campaign["status"] if campaign else "idle",
     }
+    resume_path = get_config("master_resume_path")
+    resume_name = Path(resume_path).name if resume_path else None
     return render_template("dashboard.html",
                            applications=applications,
                            manual_queue=manual,
                            stats=stats,
-                           alert=_alert)
+                           alert=_alert,
+                           resume_name=resume_name)
+
+
+@app.route("/settings", methods=["GET", "POST"])
+def settings():
+    success = None
+    error = None
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip()
+        phone = request.form.get("phone", "").strip()
+        api_key = request.form.get("api_key", "").strip()
+        resume_file = request.files.get("resume")
+
+        if not all([name, email, phone]):
+            error = "Name, email, and phone are required."
+        else:
+            set_config("name", name)
+            set_config("email", email)
+            set_config("phone", phone)
+            if api_key:
+                from dotenv import dotenv_values
+                env_path = Path(".env")
+                existing = dict(dotenv_values(env_path)) if env_path.exists() else {}
+                existing["ANTHROPIC_API_KEY"] = api_key
+                env_path.write_text("\n".join(f"{k}={v}" for k, v in existing.items()) + "\n")
+            if resume_file and resume_file.filename:
+                master_path = RESUMES_DIR / "master.docx"
+                resume_file.save(master_path)
+                set_config("master_resume_path", str(master_path))
+            success = "Settings saved."
+
+    resume_path = get_config("master_resume_path")
+    return render_template("settings.html",
+                           name=get_config("name") or "",
+                           email=get_config("email") or "",
+                           phone=get_config("phone") or "",
+                           current_resume=Path(resume_path).name if resume_path else None,
+                           success=success,
+                           error=error)
 
 
 @app.route("/campaign/start", methods=["POST"])
@@ -84,23 +126,32 @@ def campaign_start():
             return redirect(url_for("dashboard"))
 
         titles_raw = request.form.get("titles", "").strip()
-        locations_raw = request.form.get("locations", "").strip()
+        location_text = request.form.get("location_text", "").strip()
+        work_types = request.form.getlist("work_type")        # e.g. ["1","2","3"]
+        experience_levels = request.form.getlist("exp_level") # e.g. ["3","4"]
+        date_posted = request.form.get("date_posted", "")     # e.g. "r604800"
         titles = [t.strip() for t in titles_raw.split(",") if t.strip()]
-        locations = [l.strip() for l in locations_raw.split(",") if l.strip()]
 
         if not titles:
             _alert = "Please provide at least one job title."
             return redirect(url_for("dashboard"))
 
+        filters = {
+            "location_text": location_text,
+            "work_types": work_types,
+            "experience_levels": experience_levels,
+            "date_posted": date_posted,
+        }
+
         campaign_id = create_campaign(
-            name=titles_raw, titles=titles_raw, locations=locations_raw
+            name=titles_raw, titles=titles_raw, locations=location_text
         )
 
         _stop_event = threading.Event()
         _alert = None
         _runner_thread = threading.Thread(
             target=run_campaign,
-            args=(campaign_id, titles, locations, _stop_event),
+            args=(campaign_id, titles, filters, _stop_event),
             daemon=True
         )
         _runner_thread.start()
@@ -132,7 +183,7 @@ def application_detail(app_id):
     return render_template("detail.html", application=app_row)
 
 
-def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
+def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
     """Background thread: scrape LinkedIn and queue jobs until stopped."""
     global _alert, _status
     from engine.scraper import scrape_jobs
@@ -145,7 +196,7 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
     while not stop_event.is_set():
         _status = f"Scraping LinkedIn for: {', '.join(titles)}..."
         try:
-            jobs = scrape_jobs(titles, locations, seen_urls, stop_event)
+            jobs = scrape_jobs(titles, filters, seen_urls, stop_event)
         except Exception as e:
             _alert = f"Scraper error: {e}"
             _status = f"Scraper error: {e}"

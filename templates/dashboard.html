@@ -7,7 +7,16 @@
 </head>
 <body>
   <div class="container">
-    <h1>JobBot</h1>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <h1>JobBot</h1>
+      <a href="/settings" style="font-size:13px;color:#6c5ce7;text-decoration:none;">⚙ Settings</a>
+    </div>
+
+    {% if resume_name %}
+      <p class="subtitle">Resume: <strong>{{ resume_name }}</strong> · <a href="/settings" style="color:#6c5ce7;">change</a></p>
+    {% else %}
+      <p class="subtitle" style="color:#e67e22;">⚠ No resume uploaded — <a href="/settings" style="color:#e67e22;">add one in Settings</a></p>
+    {% endif %}
 
     {% if alert %}
       <div class="alert alert-warning">⚠ {{ alert }}</div>
@@ -17,15 +26,87 @@
       <span style="margin-right:8px;">⟳</span><span id="status-text"></span>
     </div>
 
-    <div class="controls">
+    <!-- Campaign Controls -->
+    <div style="background:white;border:1px solid #dee2e6;border-radius:10px;padding:18px;margin-bottom:24px;">
       <form method="POST" action="/campaign/start">
-        <input type="text" name="titles" placeholder="Product Manager, Ops Manager" required
-               style="width:260px;padding:9px 12px;border:1px solid #dee2e6;border-radius:6px;">
-        <input type="text" name="locations" placeholder="Istanbul, Remote"
-               style="width:160px;padding:9px 12px;border:1px solid #dee2e6;border-radius:6px;">
-        <button type="submit" class="btn-start">▶ Start</button>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+          <label style="display:flex;flex-direction:column;gap:5px;font-weight:500;font-size:13px;">
+            Job Titles <span style="font-weight:400;color:#868e96;">(comma separated)</span>
+            <input type="text" name="titles" placeholder="Product Manager, Ops Manager" required
+                   style="padding:9px 12px;border:1px solid #dee2e6;border-radius:6px;font-size:13px;">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:5px;font-weight:500;font-size:13px;">
+            Location
+            <input type="text" name="location_text" placeholder="Istanbul, London"
+                   style="padding:9px 12px;border:1px solid #dee2e6;border-radius:6px;font-size:13px;">
+          </label>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
+          <!-- Work Type -->
+          <div>
+            <div style="font-weight:500;font-size:13px;margin-bottom:7px;">Work Type</div>
+            <div style="display:flex;flex-direction:column;gap:5px;">
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
+                <input type="checkbox" name="work_type" value="1"> On-site
+              </label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
+                <input type="checkbox" name="work_type" value="2" checked> Remote
+              </label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
+                <input type="checkbox" name="work_type" value="3" checked> Hybrid
+              </label>
+            </div>
+          </div>
+
+          <!-- Experience Level -->
+          <div>
+            <div style="font-weight:500;font-size:13px;margin-bottom:7px;">Experience Level</div>
+            <div style="display:flex;flex-direction:column;gap:5px;">
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
+                <input type="checkbox" name="exp_level" value="1"> Internship
+              </label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
+                <input type="checkbox" name="exp_level" value="2"> Entry Level
+              </label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
+                <input type="checkbox" name="exp_level" value="3"> Associate
+              </label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
+                <input type="checkbox" name="exp_level" value="4" checked> Mid-Senior
+              </label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
+                <input type="checkbox" name="exp_level" value="5"> Director
+              </label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
+                <input type="checkbox" name="exp_level" value="6"> Executive
+              </label>
+            </div>
+          </div>
+
+          <!-- Date Posted -->
+          <div>
+            <label style="display:flex;flex-direction:column;gap:7px;font-weight:500;font-size:13px;">
+              Date Posted
+              <select name="date_posted"
+                      style="padding:9px 12px;border:1px solid #dee2e6;border-radius:6px;font-size:13px;background:white;">
+                <option value="">Any time</option>
+                <option value="r86400">Past 24 hours</option>
+                <option value="r604800" selected>Past week</option>
+                <option value="r2592000">Past month</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button type="submit" class="btn-start">▶ Start</button>
+          <span style="color:#868e96;font-size:12px;">Max 20 applications per session</span>
+        </div>
       </form>
-      <form method="POST" action="/campaign/stop">
+
+      <form method="POST" action="/campaign/stop" style="margin-top:10px;">
         <button type="submit" class="btn-stop">■ Stop</button>
       </form>
     </div>
