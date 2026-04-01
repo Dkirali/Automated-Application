@@ -7,8 +7,11 @@ from db.database import (
     init_db, get_config, is_setup_complete, set_config,
     create_campaign, update_campaign_status, get_active_campaign,
     insert_manual, get_all_applications, get_manual_queue, get_seen_urls,
-    update_application
+    update_application, insert_application
 )
+
+from engine.resume import tailor_resume
+from engine.submitter import submit_application
 
 load_dotenv()
 app = Flask(__name__)
@@ -124,19 +127,107 @@ def application_detail(app_id):
 
 
 def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
-    """Background thread: scrape + submit jobs until stopped."""
+    """Background thread: scrape LinkedIn and queue jobs until stopped."""
     global _alert
+    from engine.scraper import scrape_jobs
+
     seen_urls = get_seen_urls()
     apps_this_session = 0
-    consecutive_failures = 0
 
     while not stop_event.is_set():
-        # Scraper and submitter wired in later tasks
-        stop_event.wait(timeout=300)
+        try:
+            jobs = scrape_jobs(titles, locations, seen_urls, stop_event)
+        except Exception as e:
+            _alert = f"Scraper error: {e}"
+            break
+
+        for job in jobs:
+            if stop_event.is_set():
+                break
+
+            if apps_this_session >= 20:
+                update_campaign_status(campaign_id, "paused", "session_limit")
+                _alert = "Paused after 20 applications. Hit Start to continue."
+                return
+
+            if not job.get("easy_apply"):
+                insert_manual(
+                    campaign_id, job.get("company", ""), job.get("title", ""),
+                    job.get("location", ""), job["url"], "not_easy_apply"
+                )
+                continue
+
+            app_id = insert_application(
+                campaign_id, job.get("company", ""), job.get("title", ""),
+                job.get("location", ""), job["url"], job.get("job_description", "")
+            )
+            if app_id is None:
+                continue  # duplicate URL
+
+            # Tailor resume with Claude
+            resume_pdf_path = None
+            try:
+                master_path = get_config("master_resume_path")
+                result = tailor_resume(app_id, job.get("job_description", ""), master_path)
+                update_application(
+                    app_id, "applied",
+                    ats_score=result["ats_score"],
+                    resume_path=result["docx_path"]
+                )
+                resume_pdf_path = result.get("pdf_path") or result["docx_path"]
+            except Exception:
+                update_application(app_id, "applied")
+
+            # Submit via Easy Apply
+            try:
+                submitted = submit_application(
+                    job_url=job["url"],
+                    pdf_path=resume_pdf_path or get_config("master_resume_path"),
+                    name=get_config("name"),
+                    email=get_config("email"),
+                    phone=get_config("phone"),
+                )
+                if not submitted:
+                    update_application(app_id, "failed")
+                    continue
+            except Exception:
+                update_application(app_id, "failed")
+                continue
+
+            apps_this_session += 1
+
+        if not jobs:
+            # No new jobs found — wait 5 minutes before re-scraping
+            stop_event.wait(timeout=300)
 
     campaign = get_active_campaign()
     if campaign and campaign["status"] == "running":
         update_campaign_status(campaign_id, "stopped")
+
+
+@app.route("/download/<int:app_id>")
+def download_resume(app_id):
+    from flask import send_file
+    from db.database import get_application
+    app_row = get_application(app_id)
+    if not app_row or not app_row.get("resume_path"):
+        return "Not found", 404
+    docx_path = Path(app_row["resume_path"])
+    pdf_path = docx_path.with_suffix(".pdf")
+    serve_path = pdf_path if pdf_path.exists() else docx_path
+    if not serve_path.exists():
+        return "File not found", 404
+    return send_file(serve_path, as_attachment=True)
+
+
+@app.route("/resume-text/<int:app_id>")
+def resume_text(app_id):
+    from db.database import get_application
+    from engine.resume import read_docx_text
+    app_row = get_application(app_id)
+    if not app_row or not app_row.get("resume_path"):
+        return "No resume available."
+    return read_docx_text(Path(app_row["resume_path"]))
 
 
 if __name__ == "__main__":
