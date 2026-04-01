@@ -2,52 +2,77 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JobBot — Settings</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="container">
-    <div style="margin-bottom:20px;">
-      <a href="/" style="color:#6c5ce7;text-decoration:none;font-size:13px;">← Back to Dashboard</a>
+<div class="page-center">
+  <div class="form-card">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <span class="form-card-logo" style="margin-bottom:0;">JobBot</span>
+      <a href="/" class="back-link" style="margin-bottom:0;">← Dashboard</a>
     </div>
-    <h1>Settings</h1>
-    <p class="subtitle">Update your profile or swap out your master resume.</p>
+
+    <h2>Settings</h2>
+    <p class="form-card-sub">Update your profile or swap out your master resume.</p>
 
     {% if success %}
-      <div class="alert" style="background:#d4edda;color:#155724;border:1px solid #b8dfc5;">✓ {{ success }}</div>
+      <div class="alert alert-success">✓ {{ success }}</div>
     {% endif %}
     {% if error %}
       <div class="alert alert-error">{{ error }}</div>
     {% endif %}
 
     <form method="POST" enctype="multipart/form-data" class="setup-form">
-      <label>Full Name
-        <input type="text" name="name" value="{{ name }}" required>
-      </label>
-      <label>Email
-        <input type="email" name="email" value="{{ email }}" required>
-      </label>
-      <label>Phone
-        <input type="tel" name="phone" value="{{ phone }}" required>
-      </label>
-      <label>Claude API Key <span style="font-weight:400;color:#868e96;">(leave blank to keep current)</span>
-        <input type="password" name="api_key" placeholder="sk-ant-...">
-      </label>
-
-      <div>
-        <div style="font-weight:500;margin-bottom:6px;">Master Resume (.docx)</div>
-        {% if current_resume %}
-          <div style="font-size:12px;color:#868e96;margin-bottom:8px;padding:8px 10px;background:#f8f9fa;border-radius:6px;border:1px solid #dee2e6;">
-            📄 Current: <strong>{{ current_resume }}</strong>
-          </div>
-        {% endif %}
-        <input type="file" name="resume" accept=".docx,.doc,.pdf"
-               style="font-size:13px;padding:8px;border:1px dashed #adb5bd;border-radius:6px;width:100%;cursor:pointer;background:white;">
-        <div style="font-size:11px;color:#adb5bd;margin-top:4px;">Upload a .docx, .doc, or .pdf to replace your current resume</div>
+      <div class="form-group">
+        <label for="name">Full Name</label>
+        <input type="text" id="name" name="name" value="{{ name }}" required>
+      </div>
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" value="{{ email }}" required>
+      </div>
+      <div class="form-group">
+        <label for="phone">Phone</label>
+        <input type="tel" id="phone" name="phone" value="{{ phone }}" required>
+      </div>
+      <div class="form-group">
+        <label for="api_key">Claude API Key <span style="font-weight:400;color:var(--clr-text-muted);font-size:12px;">(leave blank to keep current)</span></label>
+        <input type="password" id="api_key" name="api_key" placeholder="sk-ant-…">
       </div>
 
-      <button type="submit" class="btn-primary">Save Changes</button>
+      <div class="form-group">
+        <label>Master Resume</label>
+        {% if current_resume %}
+          <div class="file-current">📄 {{ current_resume }}</div>
+        {% endif %}
+        <div class="file-drop" id="file-drop">
+          <input type="file" name="resume" accept=".docx,.doc,.pdf" id="resume-input">
+          <div class="file-drop-icon">📤</div>
+          <div class="file-drop-text">Upload a new resume to replace</div>
+          <div class="file-drop-hint">.docx, .doc, or .pdf accepted</div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:12px;">
+        Save Changes
+      </button>
     </form>
+
   </div>
+</div>
+
+<script>
+  document.getElementById('resume-input').addEventListener('change', function(e) {
+    const name = e.target.files[0]?.name;
+    if (name) {
+      this.closest('.file-drop').querySelector('.file-drop-text').textContent = '✓ ' + name;
+      this.closest('.file-drop').style.borderColor = 'var(--clr-success)';
+      this.closest('.file-drop').style.background = 'var(--clr-success-tint)';
+    }
+  });
+</script>
 </body>
 </html>
