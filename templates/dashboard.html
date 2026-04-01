@@ -27,6 +27,18 @@
     <p class="subtitle-warn">⚠ No resume uploaded — <a href="/settings" style="color:var(--clr-danger);">add one in Settings</a></p>
   {% endif %}
 
+  <!-- LinkedIn Connection Banner -->
+  {% if not linkedin_connected %}
+  <div class="alert alert-warning" id="linkedin-banner">
+    <span>⚠ LinkedIn not connected —</span>
+    <button onclick="connectLinkedIn()" id="connect-btn"
+            style="background:var(--clr-primary);color:white;border:none;padding:4px 12px;border-radius:var(--radius-full);font-size:12px;font-weight:600;cursor:pointer;margin-left:6px;">
+      Connect LinkedIn
+    </button>
+    <span id="connect-msg" style="display:none;margin-left:8px;font-size:12px;"></span>
+  </div>
+  {% endif %}
+
   <!-- Alert -->
   {% if alert %}
     <div class="alert alert-warning">⚠ {{ alert }}</div>
@@ -207,6 +219,30 @@
       activityBar.classList.remove('visible');
       statusDot.classList.remove('running');
     }
+  }
+
+  function connectLinkedIn() {
+    const btn = document.getElementById('connect-btn');
+    const msg = document.getElementById('connect-msg');
+    btn.disabled = true;
+    btn.textContent = 'Opening…';
+    fetch('/linkedin-connect', { method: 'POST' })
+      .then(() => {
+        btn.style.display = 'none';
+        msg.style.display = 'inline';
+        msg.textContent = 'Browser open — log in then close that Chrome window.';
+        // Poll until connected
+        const check = setInterval(() => {
+          fetch('/linkedin-status').then(r => r.json()).then(d => {
+            if (d.connected) {
+              clearInterval(check);
+              document.getElementById('linkedin-banner').innerHTML =
+                '<span style="color:var(--clr-success)">✓ LinkedIn connected</span>';
+              setTimeout(() => document.getElementById('linkedin-banner').remove(), 2500);
+            }
+          });
+        }, 2000);
+      });
   }
 
   function pollStatus() {

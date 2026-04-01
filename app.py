@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 from pathlib import Path
 from flask import Flask, jsonify, redirect, render_template, request, url_for
@@ -36,10 +37,37 @@ _alert = None
 _status = "Idle"
 _campaign_lock = threading.Lock()
 
+JOBBOT_PROFILE = Path.home() / ".jobbot-chrome"
+
+
+def _linkedin_connected() -> bool:
+    """True if the dedicated Chrome profile has LinkedIn cookies."""
+    return (JOBBOT_PROFILE / "Default" / "Cookies").exists()
+
+
+def _open_linkedin_browser():
+    """Open Chrome on the LinkedIn login page using the dedicated profile."""
+    from playwright.sync_api import sync_playwright
+    JOBBOT_PROFILE.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=str(JOBBOT_PROFILE),
+            headless=False,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        page = context.new_page()
+        page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
+        try:
+            page.wait_for_event("close", timeout=600_000)
+        except Exception:
+            pass
+        context.close()
+
 
 @app.before_request
 def setup_guard():
-    allowed = {"setup", "settings", "static"}
+    allowed = {"setup", "settings", "static", "linkedin_connect", "linkedin_status"}
     if request.endpoint not in allowed and not is_setup_complete():
         return redirect(url_for("setup"))
 
@@ -88,6 +116,7 @@ def dashboard():
     resume_path = get_config("master_resume_path")
     resume_name = Path(resume_path).name if resume_path else None
     return render_template("dashboard.html",
+                           linkedin_connected=_linkedin_connected(),
                            applications=applications,
                            manual_queue=manual,
                            stats=stats,
@@ -191,6 +220,18 @@ def campaign_stop():
 @app.route("/status")
 def status():
     return jsonify(status=_status)
+
+
+@app.route("/linkedin-status")
+def linkedin_status():
+    return jsonify(connected=_linkedin_connected())
+
+
+@app.route("/linkedin-connect", methods=["POST"])
+def linkedin_connect():
+    """Spawn the LinkedIn login browser in a background thread."""
+    threading.Thread(target=_open_linkedin_browser, daemon=True).start()
+    return jsonify(ok=True)
 
 
 @app.route("/application/<int:app_id>")
