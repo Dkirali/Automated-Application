@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ application.title }} — JobBot</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <a href="/" style="color:#6c5ce7;text-decoration:none;font-size:13px;">← Back to Dashboard</a>
+    <h1 style="margin-top:12px;">{{ application.title }}</h1>
+    <p class="subtitle">{{ application.company }} · {{ application.location }}</p>
+
+    <div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;">
+      <span class="ats-badge">ATS Score: {{ application.ats_score or '—' }}%</span>
+      {% if application.resume_path %}
+        <a href="/download/{{ application.id }}" class="btn-primary" style="font-size:13px;padding:6px 14px;">
+          ↓ Download PDF
+        </a>
+      {% endif %}
+    </div>
+
+    <div class="detail-grid">
+      <div class="detail-panel">
+        <h3>Job Posting</h3>
+        <div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#495057;max-height:600px;overflow-y:auto;">
+          {{ application.job_description or 'No description saved.' }}
+        </div>
+      </div>
+
+      <div class="detail-panel">
+        <h3>Your Tailored Resume
+          {% if application.ats_score %}
+            <span class="ats-badge" style="margin-left:8px;">{{ application.ats_score }}%</span>
+          {% endif %}
+        </h3>
+        {% if application.resume_path %}
+          <div id="resume-content" style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#495057;max-height:600px;overflow-y:auto;">
+            Loading...
+          </div>
+          <script>
+            fetch('/resume-text/{{ application.id }}')
+              .then(r => r.text())
+              .then(text => { document.getElementById('resume-content').innerText = text; });
+          </script>
+        {% else %}
+          <p style="color:#868e96;">Resume not yet generated.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</body>
+</html>

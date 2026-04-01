@@ -10,6 +10,8 @@ from db.database import (
     update_application, insert_application
 )
 
+from engine.resume import tailor_resume
+
 load_dotenv()
 app = Flask(__name__)
 RESUMES_DIR = Path("resumes")
@@ -161,9 +163,19 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
             if app_id is None:
                 continue  # duplicate URL
 
-            # Resume tailoring + submission wired in Tasks 8 and 11
-            update_application(app_id, "applied")
+            # Tailor resume with Claude
+            try:
+                master_path = get_config("master_resume_path")
+                result = tailor_resume(app_id, job.get("job_description", ""), master_path)
+                update_application(
+                    app_id, "applied",
+                    ats_score=result["ats_score"],
+                    resume_path=result["docx_path"]
+                )
+            except Exception:
+                update_application(app_id, "applied")
             apps_this_session += 1
+            # Easy Apply submission wired in Task 11
 
         if not jobs:
             # No new jobs found — wait 5 minutes before re-scraping
@@ -172,6 +184,31 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
     campaign = get_active_campaign()
     if campaign and campaign["status"] == "running":
         update_campaign_status(campaign_id, "stopped")
+
+
+@app.route("/download/<int:app_id>")
+def download_resume(app_id):
+    from flask import send_file
+    from db.database import get_application
+    app_row = get_application(app_id)
+    if not app_row or not app_row.get("resume_path"):
+        return "Not found", 404
+    docx_path = Path(app_row["resume_path"])
+    pdf_path = docx_path.with_suffix(".pdf")
+    serve_path = pdf_path if pdf_path.exists() else docx_path
+    if not serve_path.exists():
+        return "File not found", 404
+    return send_file(serve_path, as_attachment=True)
+
+
+@app.route("/resume-text/<int:app_id>")
+def resume_text(app_id):
+    from db.database import get_application
+    from engine.resume import read_docx_text
+    app_row = get_application(app_id)
+    if not app_row or not app_row.get("resume_path"):
+        return "No resume available."
+    return read_docx_text(Path(app_row["resume_path"]))
 
 
 if __name__ == "__main__":
