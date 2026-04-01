@@ -1,23 +1,23 @@
 import random
-import shutil
-import tempfile
 from pathlib import Path
 from urllib.parse import urlencode
 from playwright.sync_api import sync_playwright, Page
 
-CHROME_USER_DATA = Path.home() / "Library/Application Support/Google/Chrome"
+# Dedicated Chrome profile for JobBot — persists between runs, never conflicts
+# with your regular Chrome. Log in to LinkedIn once and the session stays.
+JOBBOT_PROFILE = Path.home() / ".jobbot-chrome"
 LINKEDIN_JOBS_URL = "https://www.linkedin.com/jobs/search/"
 
 
 def get_browser_context(playwright):
     """
-    Launch Chrome with a copy of the Default profile so the bot can run
-    while your regular Chrome is open (avoids SingletonLock conflict).
+    Launch Chrome using a dedicated JobBot profile (~/.jobbot-chrome).
+    No conflict with regular Chrome. LinkedIn session persists across runs.
+    On first launch the user logs in manually — never again after that.
     """
-    tmp_dir = Path(tempfile.mkdtemp(prefix="jobbot-chrome-"))
-    shutil.copytree(CHROME_USER_DATA / "Default", tmp_dir / "Default")
+    JOBBOT_PROFILE.mkdir(parents=True, exist_ok=True)
     return playwright.chromium.launch_persistent_context(
-        user_data_dir=str(tmp_dir),
+        user_data_dir=str(JOBBOT_PROFILE),
         headless=False,
         channel="chrome",
         args=["--disable-blink-features=AutomationControlled"],
