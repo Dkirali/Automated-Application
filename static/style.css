@@ -101,6 +101,50 @@ a:hover { text-decoration: underline; }
 }
 .icon-link:hover { color: var(--clr-primary); text-decoration: none; }
 
+/* LinkedIn connection pill */
+.li-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1.5px solid;
+  transition: all var(--transition);
+}
+.li-pill--on {
+  background: var(--clr-success-tint);
+  color: #0a7060;
+  border-color: #9ee8d6;
+}
+.li-pill--off {
+  background: var(--clr-warning-tint);
+  color: var(--clr-warning-text);
+  border-color: #f7dfa0;
+}
+.li-pill-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.li-pill--on  .li-pill-dot { background: var(--clr-success); }
+.li-pill--off .li-pill-dot { background: var(--clr-warning); animation: pulse-dot 1.8s ease-in-out infinite; }
+.li-pill-btn {
+  background: var(--clr-primary);
+  color: white;
+  border: none;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-left: 2px;
+  transition: background var(--transition);
+}
+.li-pill-btn:hover { background: var(--clr-primary-dark); }
+.li-pill-btn:disabled { opacity: .6; cursor: not-allowed; }
+
 .subtitle {
   font-size: 13px;
   color: var(--clr-text-muted);

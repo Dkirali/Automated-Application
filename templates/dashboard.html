@@ -16,6 +16,13 @@
       <span class="status-dot {% if stats.status == 'running' %}running{% endif %}" id="status-indicator" title="{{ stats.status }}"></span>
     </div>
     <div class="topbar-actions">
+      <span id="li-pill" class="li-pill {% if linkedin_connected %}li-pill--on{% else %}li-pill--off{% endif %}">
+        <span class="li-pill-dot"></span>
+        <span id="li-pill-label">{% if linkedin_connected %}LinkedIn connected{% else %}LinkedIn disconnected{% endif %}</span>
+        {% if not linkedin_connected %}
+          <button onclick="connectLinkedIn()" id="connect-btn" class="li-pill-btn">Connect</button>
+        {% endif %}
+      </span>
       <a href="/settings" class="icon-link">⚙ Settings</a>
     </div>
   </div>
@@ -25,18 +32,6 @@
     <p class="subtitle">Resume: <strong>{{ resume_name }}</strong> · <a href="/settings">change</a></p>
   {% else %}
     <p class="subtitle-warn">⚠ No resume uploaded — <a href="/settings" style="color:var(--clr-danger);">add one in Settings</a></p>
-  {% endif %}
-
-  <!-- LinkedIn Connection Banner -->
-  {% if not linkedin_connected %}
-  <div class="alert alert-warning" id="linkedin-banner">
-    <span>⚠ LinkedIn not connected —</span>
-    <button onclick="connectLinkedIn()" id="connect-btn"
-            style="background:var(--clr-primary);color:white;border:none;padding:4px 12px;border-radius:var(--radius-full);font-size:12px;font-weight:600;cursor:pointer;margin-left:6px;">
-      Connect LinkedIn
-    </button>
-    <span id="connect-msg" style="display:none;margin-left:8px;font-size:12px;"></span>
-  </div>
   {% endif %}
 
   <!-- Alert -->
@@ -222,27 +217,25 @@
   }
 
   function connectLinkedIn() {
-    const btn = document.getElementById('connect-btn');
-    const msg = document.getElementById('connect-msg');
+    const btn   = document.getElementById('connect-btn');
+    const pill  = document.getElementById('li-pill');
+    const label = document.getElementById('li-pill-label');
     btn.disabled = true;
     btn.textContent = 'Opening…';
-    fetch('/linkedin-connect', { method: 'POST' })
-      .then(() => {
-        btn.style.display = 'none';
-        msg.style.display = 'inline';
-        msg.textContent = 'Browser open — log in then close that Chrome window.';
-        // Poll until connected
-        const check = setInterval(() => {
-          fetch('/linkedin-status').then(r => r.json()).then(d => {
-            if (d.connected) {
-              clearInterval(check);
-              document.getElementById('linkedin-banner').innerHTML =
-                '<span style="color:var(--clr-success)">✓ LinkedIn connected</span>';
-              setTimeout(() => document.getElementById('linkedin-banner').remove(), 2500);
-            }
-          });
-        }, 2000);
-      });
+    fetch('/linkedin-connect', { method: 'POST' }).then(() => {
+      label.textContent = 'Log in & close Chrome window…';
+      const check = setInterval(() => {
+        fetch('/linkedin-status').then(r => r.json()).then(d => {
+          if (d.connected) {
+            clearInterval(check);
+            pill.classList.remove('li-pill--off');
+            pill.classList.add('li-pill--on');
+            label.textContent = 'LinkedIn connected';
+            btn.remove();
+          }
+        });
+      }, 2000);
+    });
   }
 
   function pollStatus() {
