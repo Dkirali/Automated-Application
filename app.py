@@ -16,6 +16,19 @@ from engine.submitter import submit_application
 load_dotenv()
 app = Flask(__name__)
 RESUMES_DIR = Path("resumes")
+ALLOWED_RESUME_EXTENSIONS = {".docx", ".doc", ".pdf"}
+
+
+def _save_resume(file) -> tuple[Path | None, str | None]:
+    """Save an uploaded resume file. Returns (path, error_message)."""
+    if not file or not file.filename:
+        return None, None
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_RESUME_EXTENSIONS:
+        return None, f"Unsupported file type '{ext}'. Please upload a .docx, .doc, or .pdf."
+    dest = RESUMES_DIR / f"master{ext}"
+    file.save(dest)
+    return dest, None
 
 _stop_event = threading.Event()
 _runner_thread = None
@@ -43,8 +56,11 @@ def setup():
         if not all([name, email, phone, api_key, resume_file]):
             return render_template("setup.html", error="All fields are required.")
 
-        master_path = RESUMES_DIR / "master.docx"
-        resume_file.save(master_path)
+        master_path, err = _save_resume(resume_file)
+        if err:
+            return render_template("setup.html", error=err)
+        if not master_path:
+            return render_template("setup.html", error="Please upload your resume.")
         set_config("name", name)
         set_config("email", email)
         set_config("phone", phone)
@@ -103,10 +119,13 @@ def settings():
                 existing["ANTHROPIC_API_KEY"] = api_key
                 env_path.write_text("\n".join(f"{k}={v}" for k, v in existing.items()) + "\n")
             if resume_file and resume_file.filename:
-                master_path = RESUMES_DIR / "master.docx"
-                resume_file.save(master_path)
-                set_config("master_resume_path", str(master_path))
-            success = "Settings saved."
+                new_path, err = _save_resume(resume_file)
+                if err:
+                    error = err
+                else:
+                    set_config("master_resume_path", str(new_path))
+            if not error:
+                success = "Settings saved."
 
     resume_path = get_config("master_resume_path")
     return render_template("settings.html",

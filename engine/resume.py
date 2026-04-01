@@ -44,26 +44,61 @@ def calculate_ats_score(keywords: list[str], resume_text: str) -> int:
     return round((matched / len(keywords)) * 100)
 
 
+ALLOWED_EXTENSIONS = {".docx", ".doc", ".pdf"}
+
+
+def read_resume_text(path: Path) -> str:
+    """Read plain text from .docx, .doc, or .pdf resume files."""
+    ext = path.suffix.lower()
+    if ext == ".docx":
+        from docx import Document
+        doc = Document(path)
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    elif ext == ".doc":
+        import mammoth
+        with open(path, "rb") as f:
+            result = mammoth.extract_raw_text(f)
+        return result.value.strip()
+    elif ext == ".pdf":
+        from pypdf import PdfReader
+        reader = PdfReader(path)
+        return "\n".join(
+            page.extract_text() for page in reader.pages if page.extract_text()
+        ).strip()
+    else:
+        raise ValueError(f"Unsupported resume format: {ext}")
+
+
+# Keep old name as alias so detail view route still works
 def read_docx_text(path: Path) -> str:
-    from docx import Document
-    doc = Document(path)
-    return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    return read_resume_text(path)
 
 
 def write_tailored_docx(master_path: Path, new_text: str, output_path: Path):
+    """Write tailored text to a .docx.
+    For .docx masters: preserve formatting by copying structure.
+    For .doc/.pdf masters: create a clean new document.
+    """
     from docx import Document
-    shutil.copy(master_path, output_path)
-    doc = Document(output_path)
-    lines = [l for l in new_text.splitlines() if l.strip()]
-    para_idx = 0
-    for para in doc.paragraphs:
-        if para.text.strip() and para_idx < len(lines):
-            for run in para.runs:
-                run.text = ""
-            if para.runs:
-                para.runs[0].text = lines[para_idx]
-            para_idx += 1
-    doc.save(output_path)
+    if master_path.suffix.lower() == ".docx":
+        shutil.copy(master_path, output_path)
+        doc = Document(output_path)
+        lines = [l for l in new_text.splitlines() if l.strip()]
+        para_idx = 0
+        for para in doc.paragraphs:
+            if para.text.strip() and para_idx < len(lines):
+                for run in para.runs:
+                    run.text = ""
+                if para.runs:
+                    para.runs[0].text = lines[para_idx]
+                para_idx += 1
+        doc.save(output_path)
+    else:
+        doc = Document()
+        for line in new_text.splitlines():
+            if line.strip():
+                doc.add_paragraph(line.strip())
+        doc.save(output_path)
 
 
 def export_pdf(docx_path: Path, pdf_path: Path):
@@ -79,7 +114,7 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
     master_path = Path(master_resume_path)
     if not master_path.exists():
         raise FileNotFoundError(f"Master resume not found: {master_resume_path}")
-    resume_text = read_docx_text(master_path)
+    resume_text = read_resume_text(master_path)
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     try:

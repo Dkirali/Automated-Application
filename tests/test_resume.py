@@ -1,5 +1,6 @@
 import pytest
-from engine.resume import extract_keywords_from_response, calculate_ats_score, extract_resume_from_response
+from pathlib import Path
+from engine.resume import extract_keywords_from_response, calculate_ats_score, extract_resume_from_response, read_resume_text
 
 def test_extract_keywords_returns_list():
     response = "KEYWORDS: product roadmap, OKRs, stakeholder management, agile\nRESUME:\nsome text"
@@ -28,3 +29,10 @@ def test_extract_resume_from_response():
 def test_extract_resume_missing_marker():
     result = extract_resume_from_response("some random text without marker")
     assert result == ""
+
+
+def test_read_resume_text_unsupported_format(tmp_path):
+    fake = tmp_path / "resume.xyz"
+    fake.write_text("hello")
+    with pytest.raises(ValueError, match="Unsupported"):
+        read_resume_text(fake)
