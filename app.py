@@ -1,7 +1,7 @@
 import os
 import threading
 from pathlib import Path
-from flask import Flask, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 from dotenv import load_dotenv
 from db.database import (
     init_db, get_config, is_setup_complete, set_config,
@@ -11,6 +11,7 @@ from db.database import (
 )
 
 from engine.resume import tailor_resume
+from engine.submitter import submit_application
 
 load_dotenv()
 app = Flask(__name__)
@@ -19,12 +20,13 @@ RESUMES_DIR = Path("resumes")
 _stop_event = threading.Event()
 _runner_thread = None
 _alert = None
+_status = "Idle"
 _campaign_lock = threading.Lock()
 
 
 @app.before_request
 def setup_guard():
-    allowed = {"setup", "static"}
+    allowed = {"setup", "settings", "static"}
     if request.endpoint not in allowed and not is_setup_complete():
         return redirect(url_for("setup"))
 
@@ -67,11 +69,53 @@ def dashboard():
         "manual": len(manual),
         "status": campaign["status"] if campaign else "idle",
     }
+    resume_path = get_config("master_resume_path")
+    resume_name = Path(resume_path).name if resume_path else None
     return render_template("dashboard.html",
                            applications=applications,
                            manual_queue=manual,
                            stats=stats,
-                           alert=_alert)
+                           alert=_alert,
+                           resume_name=resume_name)
+
+
+@app.route("/settings", methods=["GET", "POST"])
+def settings():
+    success = None
+    error = None
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip()
+        phone = request.form.get("phone", "").strip()
+        api_key = request.form.get("api_key", "").strip()
+        resume_file = request.files.get("resume")
+
+        if not all([name, email, phone]):
+            error = "Name, email, and phone are required."
+        else:
+            set_config("name", name)
+            set_config("email", email)
+            set_config("phone", phone)
+            if api_key:
+                from dotenv import dotenv_values
+                env_path = Path(".env")
+                existing = dict(dotenv_values(env_path)) if env_path.exists() else {}
+                existing["ANTHROPIC_API_KEY"] = api_key
+                env_path.write_text("\n".join(f"{k}={v}" for k, v in existing.items()) + "\n")
+            if resume_file and resume_file.filename:
+                master_path = RESUMES_DIR / "master.docx"
+                resume_file.save(master_path)
+                set_config("master_resume_path", str(master_path))
+            success = "Settings saved."
+
+    resume_path = get_config("master_resume_path")
+    return render_template("settings.html",
+                           name=get_config("name") or "",
+                           email=get_config("email") or "",
+                           phone=get_config("phone") or "",
+                           current_resume=Path(resume_path).name if resume_path else None,
+                           success=success,
+                           error=error)
 
 
 @app.route("/campaign/start", methods=["POST"])
@@ -82,23 +126,32 @@ def campaign_start():
             return redirect(url_for("dashboard"))
 
         titles_raw = request.form.get("titles", "").strip()
-        locations_raw = request.form.get("locations", "").strip()
+        location_text = request.form.get("location_text", "").strip()
+        work_types = request.form.getlist("work_type")        # e.g. ["1","2","3"]
+        experience_levels = request.form.getlist("exp_level") # e.g. ["3","4"]
+        date_posted = request.form.get("date_posted", "")     # e.g. "r604800"
         titles = [t.strip() for t in titles_raw.split(",") if t.strip()]
-        locations = [l.strip() for l in locations_raw.split(",") if l.strip()]
 
         if not titles:
             _alert = "Please provide at least one job title."
             return redirect(url_for("dashboard"))
 
+        filters = {
+            "location_text": location_text,
+            "work_types": work_types,
+            "experience_levels": experience_levels,
+            "date_posted": date_posted,
+        }
+
         campaign_id = create_campaign(
-            name=titles_raw, titles=titles_raw, locations=locations_raw
+            name=titles_raw, titles=titles_raw, locations=location_text
         )
 
         _stop_event = threading.Event()
         _alert = None
         _runner_thread = threading.Thread(
             target=run_campaign,
-            args=(campaign_id, titles, locations, _stop_event),
+            args=(campaign_id, titles, filters, _stop_event),
             daemon=True
         )
         _runner_thread.start()
@@ -116,6 +169,11 @@ def campaign_stop():
     return redirect(url_for("dashboard"))
 
 
+@app.route("/status")
+def status():
+    return jsonify(status=_status)
+
+
 @app.route("/application/<int:app_id>")
 def application_detail(app_id):
     from db.database import get_application
@@ -125,45 +183,63 @@ def application_detail(app_id):
     return render_template("detail.html", application=app_row)
 
 
-def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
+def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
     """Background thread: scrape LinkedIn and queue jobs until stopped."""
-    global _alert
+    global _alert, _status
     from engine.scraper import scrape_jobs
+    from engine.safety import StopSignal
 
     seen_urls = get_seen_urls()
     apps_this_session = 0
+    consecutive_failures = 0
 
     while not stop_event.is_set():
+        _status = f"Scraping LinkedIn for: {', '.join(titles)}..."
         try:
-            jobs = scrape_jobs(titles, locations, seen_urls, stop_event)
+            jobs = scrape_jobs(titles, filters, seen_urls, stop_event)
         except Exception as e:
             _alert = f"Scraper error: {e}"
+            _status = f"Scraper error: {e}"
             break
+
+        if not jobs:
+            _status = "No new jobs found — waiting 5 minutes before re-scraping..."
+            stop_event.wait(timeout=300)
+            continue
+
+        _status = f"Found {len(jobs)} new job(s) — processing..."
 
         for job in jobs:
             if stop_event.is_set():
                 break
 
+            company = job.get("company", "Unknown")
+            title = job.get("title", "Unknown")
+
             if apps_this_session >= 20:
                 update_campaign_status(campaign_id, "paused", "session_limit")
                 _alert = "Paused after 20 applications. Hit Start to continue."
+                _status = "Paused — session limit of 20 reached."
                 return
 
             if not job.get("easy_apply"):
+                _status = f"Skipping {title} at {company} — not Easy Apply"
                 insert_manual(
-                    campaign_id, job.get("company", ""), job.get("title", ""),
+                    campaign_id, company, title,
                     job.get("location", ""), job["url"], "not_easy_apply"
                 )
                 continue
 
             app_id = insert_application(
-                campaign_id, job.get("company", ""), job.get("title", ""),
+                campaign_id, company, title,
                 job.get("location", ""), job["url"], job.get("job_description", "")
             )
             if app_id is None:
                 continue  # duplicate URL
 
             # Tailor resume with Claude
+            resume_pdf_path = None
+            _status = f"Tailoring resume for {title} at {company}..."
             try:
                 master_path = get_config("master_resume_path")
                 result = tailor_resume(app_id, job.get("job_description", ""), master_path)
@@ -172,15 +248,50 @@ def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
                     ats_score=result["ats_score"],
                     resume_path=result["docx_path"]
                 )
+                resume_pdf_path = result.get("pdf_path") or result["docx_path"]
+                _status = f"Resume tailored for {title} at {company} (ATS: {result['ats_score']}%) — submitting..."
             except Exception:
                 update_application(app_id, "applied")
+                _status = f"Resume tailoring failed for {title} at {company} — submitting with master resume..."
+
+            # Submit via Easy Apply
+            _status = f"Submitting Easy Apply for {title} at {company}..."
+            try:
+                submitted = submit_application(
+                    job_url=job["url"],
+                    pdf_path=resume_pdf_path or get_config("master_resume_path"),
+                    name=get_config("name"),
+                    email=get_config("email"),
+                    phone=get_config("phone"),
+                )
+                if not submitted:
+                    update_application(app_id, "failed")
+                    _status = f"Submission failed for {title} at {company}"
+                    consecutive_failures += 1
+                    if consecutive_failures >= 3:
+                        update_campaign_status(campaign_id, "stopped", "repeated_failures")
+                        _alert = StopSignal.REPEATED_FAILURES.value
+                        _status = "Stopped — too many consecutive failures"
+                        stop_event.set()
+                        return
+                    continue
+            except Exception:
+                update_application(app_id, "failed")
+                _status = f"Submission error for {title} at {company}"
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    update_campaign_status(campaign_id, "stopped", "repeated_failures")
+                    _alert = StopSignal.REPEATED_FAILURES.value
+                    _status = "Stopped — too many consecutive failures"
+                    stop_event.set()
+                    return
+                continue
+
+            consecutive_failures = 0
             apps_this_session += 1
-            # Easy Apply submission wired in Task 11
+            _status = f"Applied to {title} at {company} ({apps_this_session}/20 this session)"
 
-        if not jobs:
-            # No new jobs found — wait 5 minutes before re-scraping
-            stop_event.wait(timeout=300)
-
+    _status = "Idle"
     campaign = get_active_campaign()
     if campaign and campaign["status"] == "running":
         update_campaign_status(campaign_id, "stopped")

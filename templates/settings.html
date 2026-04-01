@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>JobBot — Settings</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <div style="margin-bottom:20px;">
+      <a href="/" style="color:#6c5ce7;text-decoration:none;font-size:13px;">← Back to Dashboard</a>
+    </div>
+    <h1>Settings</h1>
+    <p class="subtitle">Update your profile or swap out your master resume.</p>
+
+    {% if success %}
+      <div class="alert" style="background:#d4edda;color:#155724;border:1px solid #b8dfc5;">✓ {{ success }}</div>
+    {% endif %}
+    {% if error %}
+      <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" enctype="multipart/form-data" class="setup-form">
+      <label>Full Name
+        <input type="text" name="name" value="{{ name }}" required>
+      </label>
+      <label>Email
+        <input type="email" name="email" value="{{ email }}" required>
+      </label>
+      <label>Phone
+        <input type="tel" name="phone" value="{{ phone }}" required>
+      </label>
+      <label>Claude API Key <span style="font-weight:400;color:#868e96;">(leave blank to keep current)</span>
+        <input type="password" name="api_key" placeholder="sk-ant-...">
+      </label>
+
+      <div>
+        <div style="font-weight:500;margin-bottom:6px;">Master Resume (.docx)</div>
+        {% if current_resume %}
+          <div style="font-size:12px;color:#868e96;margin-bottom:8px;padding:8px 10px;background:#f8f9fa;border-radius:6px;border:1px solid #dee2e6;">
+            📄 Current: <strong>{{ current_resume }}</strong>
+          </div>
+        {% endif %}
+        <input type="file" name="resume" accept=".docx"
+               style="font-size:13px;padding:8px;border:1px dashed #adb5bd;border-radius:6px;width:100%;cursor:pointer;background:white;">
+        <div style="font-size:11px;color:#adb5bd;margin-top:4px;">Upload a new .docx to replace your current resume</div>
+      </div>
+
+      <button type="submit" class="btn-primary">Save Changes</button>
+    </form>
+  </div>
+</body>
+</html>

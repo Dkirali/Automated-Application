@@ -1,4 +1,6 @@
 import random
+import shutil
+import tempfile
 from pathlib import Path
 from urllib.parse import urlencode
 from playwright.sync_api import sync_playwright, Page
@@ -8,9 +10,14 @@ LINKEDIN_JOBS_URL = "https://www.linkedin.com/jobs/search/"
 
 
 def get_browser_context(playwright):
-    """Launch Chrome reusing existing user profile (session cookies included)."""
+    """
+    Launch Chrome with a copy of the Default profile so the bot can run
+    while your regular Chrome is open (avoids SingletonLock conflict).
+    """
+    tmp_dir = Path(tempfile.mkdtemp(prefix="jobbot-chrome-"))
+    shutil.copytree(CHROME_USER_DATA / "Default", tmp_dir / "Default")
     return playwright.chromium.launch_persistent_context(
-        user_data_dir=str(CHROME_USER_DATA),
+        user_data_dir=str(tmp_dir),
         headless=False,
         channel="chrome",
         args=["--disable-blink-features=AutomationControlled"],
@@ -32,17 +39,37 @@ def parse_job_card(card) -> dict:
     }
 
 
-def build_search_url(titles: list[str], locations: list[str]) -> str:
-    """Build a LinkedIn job search URL from title and location lists."""
-    title_query = " OR ".join(titles)
-    location_query = locations[0] if locations else ""
-    params = urlencode({"keywords": title_query, "location": location_query})
-    return f"{LINKEDIN_JOBS_URL}?{params}"
-
-
-def scrape_jobs(titles: list[str], locations: list[str], seen_urls: set, stop_event) -> list[dict]:
+def build_search_url(titles: list[str], filters: dict) -> str:
     """
-    Scrape LinkedIn for jobs matching titles/locations.
+    Build a LinkedIn job search URL.
+    filters keys:
+      location_text    — geographic location string (e.g. "Istanbul")
+      work_types       — list of strings: "1"=On-site, "2"=Remote, "3"=Hybrid
+      experience_levels— list of strings: "1"-"6"
+      date_posted      — LinkedIn f_TPR value: "r86400","r604800","r2592000" or ""
+    """
+    params = {
+        "keywords": " OR ".join(titles),
+        "location": filters.get("location_text", ""),
+    }
+    work_types = filters.get("work_types", [])
+    if work_types:
+        params["f_WT"] = ",".join(work_types)
+
+    exp_levels = filters.get("experience_levels", [])
+    if exp_levels:
+        params["f_E"] = ",".join(exp_levels)
+
+    date_posted = filters.get("date_posted", "")
+    if date_posted:
+        params["f_TPR"] = date_posted
+
+    return f"{LINKEDIN_JOBS_URL}?{urlencode(params)}"
+
+
+def scrape_jobs(titles: list[str], filters: dict, seen_urls: set, stop_event) -> list[dict]:
+    """
+    Scrape LinkedIn for jobs matching titles and filters.
     Returns list of dicts: title, company, location, url, easy_apply, job_description.
     stop_event: threading.Event — checked between jobs to allow early exit.
     """
@@ -53,7 +80,7 @@ def scrape_jobs(titles: list[str], locations: list[str], seen_urls: set, stop_ev
         try:
             page = context.new_page()
 
-            search_url = build_search_url(titles, locations)
+            search_url = build_search_url(titles, filters)
             page.goto(search_url, wait_until="domcontentloaded")
             page.wait_for_timeout(3000)
 
