@@ -1,4 +1,6 @@
 import random
+import shutil
+import tempfile
 from pathlib import Path
 from urllib.parse import urlencode
 from playwright.sync_api import sync_playwright, Page
@@ -8,9 +10,14 @@ LINKEDIN_JOBS_URL = "https://www.linkedin.com/jobs/search/"
 
 
 def get_browser_context(playwright):
-    """Launch Chrome reusing existing user profile (session cookies included)."""
+    """
+    Launch Chrome with a copy of the Default profile so the bot can run
+    while your regular Chrome is open (avoids SingletonLock conflict).
+    """
+    tmp_dir = Path(tempfile.mkdtemp(prefix="jobbot-chrome-"))
+    shutil.copytree(CHROME_USER_DATA / "Default", tmp_dir / "Default")
     return playwright.chromium.launch_persistent_context(
-        user_data_dir=str(CHROME_USER_DATA),
+        user_data_dir=str(tmp_dir),
         headless=False,
         channel="chrome",
         args=["--disable-blink-features=AutomationControlled"],
