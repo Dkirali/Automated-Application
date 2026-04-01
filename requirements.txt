@@ -5,5 +5,8 @@ python-docx==1.1.2
 mammoth==1.7.1
 weasyprint==62.3
 python-dotenv==1.0.1
+google-genai
+groq
 pypdf==6.9.2
+pdfplumber
 pytest==8.2.0

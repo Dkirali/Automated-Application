@@ -39,7 +39,8 @@ def _fill_visible_fields(page: Page, phone: str, pdf_path: str):
     """Fill any visible form fields in the current modal step."""
     for field_label in ["Phone", "Mobile phone number"]:
         try:
-            field = page.get_by_label(field_label, exact=False)
+            # exact=True avoids matching "Phone country code"
+            field = page.get_by_label(field_label, exact=True)
             if field.count() > 0 and field.first.is_visible():
                 field.first.fill(phone)
         except Exception:
@@ -63,14 +64,21 @@ def submit_application(job_url: str, pdf_path: str, name: str, email: str, phone
         try:
             page = context.new_page()
             page.goto(job_url, wait_until="domcontentloaded")
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(3000)
 
-            apply_btn = page.locator("button.jobs-apply-button:has-text('Easy Apply')")
+            # Dismiss interstitial popup if present
+            not_now = page.locator("button[aria-label='Not now']")
+            if not_now.count() > 0:
+                not_now.click()
+                page.wait_for_timeout(1000)
+
+            # LinkedIn uses <a> or <button> for Easy Apply depending on page version
+            apply_btn = page.locator("[aria-label*='Easy Apply']")
             if apply_btn.count() == 0:
                 return False
 
-            apply_btn.click()
-            page.wait_for_timeout(1500)
+            apply_btn.first.click()
+            page.wait_for_timeout(2000)
 
             return fill_easy_apply(page, name, email, phone, pdf_path)
         finally:

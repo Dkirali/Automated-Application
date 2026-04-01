@@ -99,6 +99,7 @@ def setup():
         existing = dict(dotenv_values(env_path)) if env_path.exists() else {}
         existing["ANTHROPIC_API_KEY"] = api_key
         env_path.write_text("\n".join(f"{k}={v}" for k, v in existing.items()) + "\n")
+        os.environ["ANTHROPIC_API_KEY"] = api_key  # apply immediately without restart
         return redirect(url_for("dashboard"))
 
     return render_template("setup.html", error=None)
@@ -136,6 +137,8 @@ def settings():
         email = request.form.get("email", "").strip()
         phone = request.form.get("phone", "").strip()
         api_key = request.form.get("api_key", "").strip()
+        gemini_key = request.form.get("gemini_key", "").strip()
+        groq_key = request.form.get("groq_key", "").strip()
         resume_file = request.files.get("resume")
 
         if not all([name, email, phone]):
@@ -144,11 +147,19 @@ def settings():
             set_config("name", name)
             set_config("email", email)
             set_config("phone", phone)
-            if api_key:
+            if api_key or gemini_key or groq_key:
                 from dotenv import dotenv_values
                 env_path = Path(".env")
                 existing = dict(dotenv_values(env_path)) if env_path.exists() else {}
-                existing["ANTHROPIC_API_KEY"] = api_key
+                if api_key:
+                    existing["ANTHROPIC_API_KEY"] = api_key
+                    os.environ["ANTHROPIC_API_KEY"] = api_key
+                if groq_key:
+                    existing["GROQ_API_KEY"] = groq_key
+                    os.environ["GROQ_API_KEY"] = groq_key
+                if gemini_key:
+                    existing["GEMINI_API_KEY"] = gemini_key
+                    os.environ["GEMINI_API_KEY"] = gemini_key
                 env_path.write_text("\n".join(f"{k}={v}" for k, v in existing.items()) + "\n")
             if resume_file and resume_file.filename:
                 new_path, err = _save_resume(resume_file)

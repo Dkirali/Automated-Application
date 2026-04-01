@@ -41,7 +41,9 @@ def parse_job_card(card) -> dict:
             try:
                 el = card.locator(sel)
                 if el.count() > 0:
-                    return el.first.inner_text().strip()
+                    text = el.first.inner_text().strip()
+                    # LinkedIn often repeats the title (visible + aria); take the first line only
+                    return text.split("\n")[0].strip()
             except Exception:
                 pass
         return default
@@ -53,7 +55,11 @@ def parse_job_card(card) -> dict:
                 if el.count() > 0:
                     href = el.first.get_attribute("href") or ""
                     if "/jobs/view/" in href:
-                        return href.split("?")[0]  # strip query params
+                        path = href.split("?")[0]  # strip query params
+                        # Ensure absolute URL
+                        if path.startswith("/"):
+                            path = "https://www.linkedin.com" + path
+                        return path
             except Exception:
                 pass
         return None
@@ -141,6 +147,30 @@ def scrape_jobs(titles: list[str], filters: dict, seen_urls: set, stop_event,
             update(f"Opening LinkedIn: {search_url[:80]}…")
             page.goto(search_url, wait_until="domcontentloaded")
             page.wait_for_timeout(4000)
+
+            # Scroll the job list panel to trigger lazy-loading of all cards.
+            # LinkedIn only renders visible cards; we scroll the scrollable ancestor
+            # of the first card until no new cards appear.
+            update("Loading all job cards…")
+            for _ in range(8):
+                if stop_event.is_set():
+                    break
+                count_before = page.locator(".job-card-container").count()
+                page.evaluate("""() => {
+                    const card = document.querySelector('.job-card-container');
+                    if (!card) return;
+                    let el = card.parentElement;
+                    while (el) {
+                        if (el.scrollHeight > el.clientHeight + 50) {
+                            el.scrollBy(0, 1200);
+                            return;
+                        }
+                        el = el.parentElement;
+                    }
+                }""")
+                page.wait_for_timeout(1500)
+                if page.locator(".job-card-container").count() == count_before:
+                    break  # no new cards loaded
 
             # Try multiple card container selectors
             card_selectors = [
