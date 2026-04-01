@@ -15,28 +15,43 @@ def test_is_easy_apply_false():
 def test_parse_job_card_returns_dict():
     mock_card = MagicMock()
 
-    # Use side_effect so each locator(selector) call returns a distinct mock,
-    # preventing MagicMock from collapsing all calls onto the same child mock.
-    mock_h3 = MagicMock()
-    mock_h3.inner_text.return_value = "Product Manager"
+    # The updated parse_job_card uses multi-selector fallbacks with .count() checks.
+    # We need mocks that return count()>0 and proper text/href for the selectors
+    # that parse_job_card will try first.
 
-    mock_company = MagicMock()
-    mock_company.inner_text.return_value = "Trendyol"
+    def make_text_mock(text, count=1):
+        m = MagicMock()
+        m.count.return_value = count
+        m.first.inner_text.return_value = text
+        m.inner_text.return_value = text
+        return m
 
-    mock_location = MagicMock()
-    mock_location.first.inner_text.return_value = "Istanbul"
+    def make_href_mock(href, count=1):
+        m = MagicMock()
+        m.count.return_value = count
+        m.first.get_attribute.return_value = href
+        return m
 
-    mock_link = MagicMock()
-    mock_link.first.get_attribute.return_value = "https://linkedin.com/jobs/view/123"
+    def make_empty_mock():
+        m = MagicMock()
+        m.count.return_value = 0
+        return m
 
     def locator_side_effect(selector):
-        mapping = {
-            "h3": mock_h3,
-            ".job-card-container__primary-description": mock_company,
-            ".job-card-container__metadata-item": mock_location,
-            "a": mock_link,
-        }
-        return mapping.get(selector, MagicMock())
+        # Title — match on "h3" (last fallback in the list)
+        if selector == "h3":
+            return make_text_mock("Product Manager")
+        # Company — match on "h4"
+        elif selector == "h4":
+            return make_text_mock("Trendyol")
+        # Location
+        elif selector == ".job-card-container__metadata-item":
+            return make_text_mock("Istanbul")
+        # URL
+        elif selector == "a[href*='/jobs/view/']":
+            return make_href_mock("https://linkedin.com/jobs/view/123")
+        else:
+            return make_empty_mock()
 
     mock_card.locator.side_effect = locator_side_effect
 

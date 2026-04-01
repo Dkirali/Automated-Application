@@ -146,6 +146,40 @@
     </form>
   </div>
 
+  <!-- Pending Review -->
+  {% if pending_jobs %}
+    <div class="section-title section-title--pending">
+      Pending Review
+      <span class="section-badge">{{ pending_jobs | length }}</span>
+    </div>
+    <div class="card-list pending-list">
+      {% for job in pending_jobs %}
+        <a class="app-card app-card--pending" href="/review/{{ job.id }}">
+          <div class="app-card-body">
+            <div class="app-card-title">{{ job.title }}</div>
+            <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
+            {% if job.fit_summary %}
+              <div class="app-card-verdict">{{ job.fit_summary | truncate(100) }}</div>
+            {% endif %}
+          </div>
+          <div class="app-card-right">
+            {% if job.ats_score %}
+              {% set score = job.ats_score %}
+              {% set score_class = 'high' if score >= 70 else ('medium' if score >= 40 else 'low') %}
+              <div class="ats-mini">
+                <span class="ats-mini-label">ATS {{ score }}%</span>
+                <div class="ats-bar-wrap">
+                  <div class="ats-bar-fill {{ score_class }}" style="width:{{ score }}%"></div>
+                </div>
+              </div>
+            {% endif %}
+            <span class="badge badge-pending">Review →</span>
+          </div>
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   <!-- Applications -->
   <div class="section-title">Applications</div>
   <div class="card-list">

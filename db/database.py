@@ -18,6 +18,20 @@ def get_conn():
         conn.row_factory = sqlite3.Row
         return conn
 
+def _migrate(conn):
+    """Add columns introduced after initial schema, safe to run every startup."""
+    migrations = [
+        "ALTER TABLE applications ADD COLUMN fit_summary TEXT",
+        "ALTER TABLE applications ADD COLUMN easy_apply INTEGER DEFAULT 1",
+        "ALTER TABLE applications ADD COLUMN created_at TEXT",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass  # column already exists
+
+
 def init_db():
     with get_conn() as conn:
         conn.executescript("""
@@ -38,11 +52,14 @@ def init_db():
                 title TEXT,
                 location TEXT,
                 url TEXT UNIQUE,
-                status TEXT DEFAULT 'applied',
+                status TEXT DEFAULT 'pending',
                 ats_score INTEGER,
                 resume_path TEXT,
                 job_description TEXT,
-                applied_at TEXT
+                fit_summary TEXT,
+                easy_apply INTEGER DEFAULT 1,
+                applied_at TEXT,
+                created_at TEXT
             );
             CREATE TABLE IF NOT EXISTS manual_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +76,9 @@ def init_db():
                 value TEXT
             );
         """)
+
+        _migrate(conn)
+
 
 def set_config(key: str, value: str):
     with get_conn() as conn:
@@ -100,13 +120,16 @@ def get_active_campaign() -> dict | None:
         ).fetchone()
         return dict(row) if row else None
 
-def insert_application(campaign_id, company, title, location, url, job_description) -> int | None:
+def insert_application(campaign_id, company, title, location, url,
+                       job_description, easy_apply=True) -> int | None:
     with get_conn() as conn:
         try:
             cur = conn.execute(
-                "INSERT INTO applications (campaign_id,company,title,location,url,job_description,applied_at) "
-                "VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO applications "
+                "(campaign_id,company,title,location,url,job_description,easy_apply,status,created_at) "
+                "VALUES (?,?,?,?,?,?,?,'pending',?)",
                 (campaign_id, company, title, location, url, job_description,
+                 1 if easy_apply else 0,
                  datetime.datetime.now(datetime.timezone.utc).isoformat())
             )
             return cur.lastrowid
@@ -128,7 +151,8 @@ def insert_manual(campaign_id, company, title, location, url, reason):
 def get_all_applications() -> list[dict]:
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT * FROM applications ORDER BY applied_at DESC"
+            "SELECT * FROM applications WHERE status IN ('applied','failed','discarded') "
+            "ORDER BY applied_at DESC"
         ).fetchall()]
 
 def get_manual_queue() -> list[dict]:
@@ -143,12 +167,29 @@ def get_seen_urls() -> set:
         manual = {r[0] for r in conn.execute("SELECT url FROM manual_queue").fetchall()}
         return apps | manual
 
-def update_application(app_id: int, status: str, ats_score: int = None, resume_path: str = None):
+def update_application(app_id: int, status: str, ats_score: int = None,
+                       resume_path: str = None, fit_summary: str = None):
     with get_conn() as conn:
         conn.execute(
-            "UPDATE applications SET status=?, ats_score=?, resume_path=? WHERE id=?",
-            (status, ats_score, resume_path, app_id)
+            "UPDATE applications SET status=?, ats_score=COALESCE(?,ats_score), "
+            "resume_path=COALESCE(?,resume_path), fit_summary=COALESCE(?,fit_summary) WHERE id=?",
+            (status, ats_score, resume_path, fit_summary, app_id)
         )
+
+
+def mark_applied(app_id: int):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE applications SET status='applied', applied_at=? WHERE id=?",
+            (datetime.datetime.now(datetime.timezone.utc).isoformat(), app_id)
+        )
+
+
+def get_pending_jobs() -> list[dict]:
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM applications WHERE status='pending' ORDER BY created_at DESC"
+        ).fetchall()]
 
 def get_application(app_id: int) -> dict | None:
     with get_conn() as conn:

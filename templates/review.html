@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Review — {{ job.title }} · JobBot</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+
+  <!-- Top Bar -->
+  <div class="topbar">
+    <div class="topbar-brand">
+      <a href="/" class="back-link">← JobBot</a>
+    </div>
+    <div class="topbar-actions">
+      <a href="/settings" class="icon-link">⚙ Settings</a>
+    </div>
+  </div>
+
+  <!-- Job Header -->
+  <div class="review-header">
+    <div class="review-header-body">
+      <h1 class="review-title">{{ job.title }}</h1>
+      <p class="review-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</p>
+      <a href="{{ job.url }}" target="_blank" class="review-link">View on LinkedIn ↗</a>
+    </div>
+
+    <!-- ATS Ring -->
+    {% if job.ats_score %}
+      {% set score = job.ats_score %}
+      {% set circumference = 125.66 %}
+      {% set dash = (score / 100) * circumference %}
+      {% set gap = circumference - dash %}
+      {% set score_class = 'high' if score >= 70 else ('medium' if score >= 40 else 'low') %}
+      <div class="ats-ring-wrap">
+        <svg class="ats-ring" viewBox="0 0 48 48" width="80" height="80">
+          <circle class="ats-ring-bg" cx="24" cy="24" r="20" />
+          <circle class="ats-ring-fill {{ score_class }}"
+                  cx="24" cy="24" r="20"
+                  stroke-dasharray="{{ dash }} {{ gap }}"
+                  stroke-dashoffset="31.415" />
+        </svg>
+        <div class="ats-ring-label">
+          <span class="ats-ring-number">{{ score }}</span>
+          <span class="ats-ring-unit">ATS</span>
+        </div>
+      </div>
+    {% else %}
+      <div class="ats-ring-wrap ats-ring-wrap--loading">
+        <div class="ats-ring-placeholder">
+          <span class="ats-ring-number">—</span>
+          <span class="ats-ring-unit">ATS</span>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Fit Analysis Bar -->
+  {% if fit %}
+    <div class="fit-bar">
+      {% if fit.strengths %}
+        <div class="fit-section">
+          <div class="fit-section-label">Strengths</div>
+          <div class="fit-chips">
+            {% for s in fit.strengths %}
+              <span class="fit-chip fit-chip--strength">{{ s }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+      {% if fit.gaps and fit.gaps != ['None'] %}
+        <div class="fit-section">
+          <div class="fit-section-label">Gaps</div>
+          <div class="fit-chips">
+            {% for g in fit.gaps %}
+              <span class="fit-chip fit-chip--gap">{{ g }}</span>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+      {% if fit.verdict %}
+        <div class="fit-verdict">{{ fit.verdict }}</div>
+      {% endif %}
+    </div>
+  {% else %}
+    <div class="fit-bar fit-bar--loading">
+      <div class="skeleton-line" style="width:60%"></div>
+      <div class="skeleton-line" style="width:40%"></div>
+    </div>
+  {% endif %}
+
+  <!-- Two-panel review grid -->
+  <div class="review-grid">
+
+    <!-- Left: Job Description -->
+    <div class="review-panel">
+      <div class="review-panel-header">
+        <span class="review-panel-title">Job Description</span>
+      </div>
+      <div class="review-panel-body">
+        {% if job.job_description %}
+          <pre class="jd-text">{{ job.job_description }}</pre>
+        {% else %}
+          <p class="empty-note">No description available.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Right: Tailored Resume -->
+    <div class="review-panel">
+      <div class="review-panel-header">
+        <span class="review-panel-title">Tailored Resume</span>
+        {% if job.resume_path %}
+          <a href="/download/{{ job.id }}" class="panel-action-btn">↓ Download</a>
+        {% endif %}
+      </div>
+      <div class="review-panel-body" id="resume-panel">
+        {% if job.resume_path %}
+          <div id="resume-skeleton">
+            <div class="skeleton-line" style="width:80%"></div>
+            <div class="skeleton-line" style="width:60%"></div>
+            <div class="skeleton-line" style="width:70%"></div>
+            <div class="skeleton-line" style="width:50%"></div>
+            <div class="skeleton-line" style="width:65%"></div>
+            <div class="skeleton-line" style="width:75%"></div>
+          </div>
+          <pre class="jd-text" id="resume-text" style="display:none"></pre>
+        {% else %}
+          <div id="resume-skeleton">
+            <div class="skeleton-line" style="width:70%"></div>
+            <div class="skeleton-line" style="width:55%"></div>
+            <div class="skeleton-line" style="width:40%"></div>
+          </div>
+          <p class="empty-note" id="resume-unavailable" style="display:none">Resume tailoring in progress…</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Action Buttons -->
+  <div class="review-actions">
+    <form method="POST" action="/apply/{{ job.id }}">
+      <button type="submit" class="btn-apply">✓ Apply Now</button>
+    </form>
+    <form method="POST" action="/discard/{{ job.id }}">
+      <button type="submit" class="btn-discard">✗ Discard</button>
+    </form>
+    <a href="/" class="btn-back-dash">Back to Dashboard</a>
+  </div>
+
+</div>
+
+<script>
+  {% if job.resume_path %}
+  fetch('/resume-text/{{ job.id }}')
+    .then(r => r.text())
+    .then(text => {
+      document.getElementById('resume-skeleton').style.display = 'none';
+      const el = document.getElementById('resume-text');
+      el.textContent = text;
+      el.style.display = 'block';
+    })
+    .catch(() => {
+      document.getElementById('resume-skeleton').style.display = 'none';
+      const el = document.getElementById('resume-unavailable');
+      if (el) { el.textContent = 'Could not load resume.'; el.style.display = 'block'; }
+    });
+  {% else %}
+  // Poll until tailored resume is ready (generated on-demand in backend)
+  let attempts = 0;
+  const maxAttempts = 30;
+  const pollResume = setInterval(() => {
+    attempts++;
+    fetch('/resume-text/{{ job.id }}')
+      .then(r => r.ok ? r.text() : Promise.reject())
+      .then(text => {
+        if (text && text.trim() && text !== 'No resume available.') {
+          clearInterval(pollResume);
+          document.getElementById('resume-skeleton').style.display = 'none';
+          const el = document.getElementById('resume-text');
+          if (el) { el.textContent = text; el.style.display = 'block'; }
+        }
+        if (attempts >= maxAttempts) clearInterval(pollResume);
+      })
+      .catch(() => { if (attempts >= maxAttempts) clearInterval(pollResume); });
+  }, 3000);
+  {% endif %}
+</script>
+</body>
+</html>

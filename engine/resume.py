@@ -5,6 +5,20 @@ from pathlib import Path
 
 RESUMES_DIR = Path(__file__).parent.parent / "resumes"
 
+FIT_PROMPT = """You are a senior recruiter evaluating a candidate's fit for a role.
+
+Job Posting:
+{job_description}
+
+Candidate Resume:
+{resume_text}
+
+Respond in this exact format (no extra text):
+FIT_SCORE: <0-100>
+STRENGTHS: <comma-separated list of 2-4 matching skills or experiences>
+GAPS: <comma-separated list of 1-3 missing skills, or "None">
+VERDICT: <one sentence — would you recommend applying? why?>"""
+
 TAILOR_PROMPT = """You are an expert resume writer specialising in ATS optimisation.
 
 Job Posting:
@@ -155,4 +169,48 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
         "ats_score": ats_score,
         "docx_path": str(docx_path),
         "pdf_path": str(pdf_path) if pdf_path else None,
+    }
+
+
+def parse_fit_score(text: str) -> int:
+    m = re.search(r"FIT_SCORE:\s*(\d+)", text)
+    return int(m.group(1)) if m else 0
+
+
+def parse_fit_field(text: str, field: str) -> str:
+    m = re.search(rf"{field}:\s*([^\n]+)", text)
+    return m.group(1).strip() if m else ""
+
+
+def generate_fit_summary(job_description: str, master_resume_path: str) -> dict:
+    """
+    Call Claude to evaluate how well the candidate fits the job.
+    Returns: {fit_score, strengths, gaps, verdict, raw}
+    """
+    import anthropic
+    master_path = Path(master_resume_path)
+    if not master_path.exists():
+        raise FileNotFoundError(f"Master resume not found: {master_resume_path}")
+    resume_text = read_resume_text(master_path)
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            messages=[{"role": "user", "content": FIT_PROMPT.format(
+                job_description=job_description[:4000],
+                resume_text=resume_text[:3000],
+            )}]
+        )
+    except Exception as e:
+        raise RuntimeError(f"Claude API error: {e}") from e
+
+    raw = message.content[0].text
+    return {
+        "fit_score":  parse_fit_score(raw),
+        "strengths":  [s.strip() for s in parse_fit_field(raw, "STRENGTHS").split(",") if s.strip()],
+        "gaps":       [g.strip() for g in parse_fit_field(raw, "GAPS").split(",") if g.strip()],
+        "verdict":    parse_fit_field(raw, "VERDICT"),
+        "raw":        raw,
     }
