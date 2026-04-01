@@ -2,52 +2,101 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ application.title }} — JobBot</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="container">
-    <a href="/" style="color:#6c5ce7;text-decoration:none;font-size:13px;">← Back to Dashboard</a>
-    <h1 style="margin-top:12px;">{{ application.title }}</h1>
-    <p class="subtitle">{{ application.company }} · {{ application.location }}</p>
+<div class="container">
 
-    <div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;">
-      <span class="ats-badge">ATS Score: {{ application.ats_score or '—' }}%</span>
+  <a href="/" class="back-link">← Back to Dashboard</a>
+
+  <!-- Header -->
+  <div class="detail-header">
+    <div class="detail-header-left">
+      <h1>{{ application.title }}</h1>
+      <p class="detail-meta">{{ application.company }}{% if application.location %} · {{ application.location }}{% endif %}</p>
+    </div>
+    <div class="detail-header-right">
+      {% if application.ats_score %}
+        {% set score = application.ats_score %}
+        {% set ring_class = 'high' if score >= 70 else ('medium' if score >= 40 else 'low') %}
+        {% set offset = 100 - score %}
+        <div class="ats-ring-wrap">
+          <div class="ats-ring">
+            <svg viewBox="0 0 36 36" width="64" height="64">
+              <circle class="ats-ring-bg" cx="18" cy="18" r="15.9"/>
+              <circle class="ats-ring-fill {{ ring_class }}" cx="18" cy="18" r="15.9"
+                      stroke-dashoffset="{{ offset }}"/>
+            </svg>
+            <div class="ats-ring-value">{{ score }}%</div>
+          </div>
+          <span class="ats-ring-label">ATS Score</span>
+        </div>
+      {% else %}
+        <div class="ats-ring-wrap">
+          <div class="ats-ring">
+            <svg viewBox="0 0 36 36" width="64" height="64">
+              <circle class="ats-ring-bg" cx="18" cy="18" r="15.9"/>
+            </svg>
+            <div class="ats-ring-value" style="font-size:11px;color:var(--clr-text-subtle);">—</div>
+          </div>
+          <span class="ats-ring-label">ATS Score</span>
+        </div>
+      {% endif %}
+
       {% if application.resume_path %}
-        <a href="/download/{{ application.id }}" class="btn-primary" style="font-size:13px;padding:6px 14px;">
-          ↓ Download PDF
-        </a>
+        <a href="/download/{{ application.id }}" class="btn btn-primary btn-sm">↓ Download</a>
       {% endif %}
     </div>
+  </div>
 
-    <div class="detail-grid">
-      <div class="detail-panel">
-        <h3>Job Posting</h3>
-        <div style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#495057;max-height:600px;overflow-y:auto;">
-          {{ application.job_description or 'No description saved.' }}
-        </div>
+  <!-- Side-by-side panels -->
+  <div class="detail-grid">
+    <!-- Job Posting -->
+    <div class="detail-panel">
+      <div class="detail-panel-header">
+        <span>Job Posting</span>
       </div>
+      <div class="detail-panel-body">{{ application.job_description or 'No description saved.' }}</div>
+    </div>
 
-      <div class="detail-panel">
-        <h3>Your Tailored Resume
-          {% if application.ats_score %}
-            <span class="ats-badge" style="margin-left:8px;">{{ application.ats_score }}%</span>
-          {% endif %}
-        </h3>
-        {% if application.resume_path %}
-          <div id="resume-content" style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:#495057;max-height:600px;overflow-y:auto;">
-            Loading...
-          </div>
-          <script>
-            fetch('/resume-text/{{ application.id }}')
-              .then(r => r.text())
-              .then(text => { document.getElementById('resume-content').innerText = text; });
-          </script>
-        {% else %}
-          <p style="color:#868e96;">Resume not yet generated.</p>
+    <!-- Tailored Resume -->
+    <div class="detail-panel">
+      <div class="detail-panel-header">
+        <span>Tailored Resume</span>
+        {% if application.ats_score %}
+          <span class="badge badge-applied">ATS {{ application.ats_score }}%</span>
         {% endif %}
       </div>
+      {% if application.resume_path %}
+        <div class="detail-panel-body" id="resume-content">
+          <!-- Skeleton while loading -->
+          <div id="resume-skeleton">
+            {% for i in range(12) %}
+              <div class="skeleton-line" style="width:{{ [100,90,95,85,100,70,90,100,88,75,100,60][loop.index0] }}%"></div>
+            {% endfor %}
+          </div>
+        </div>
+        <script>
+          fetch('/resume-text/{{ application.id }}')
+            .then(r => r.text())
+            .then(text => {
+              const el = document.getElementById('resume-content');
+              el.innerHTML = '';
+              el.textContent = text || 'No resume text available.';
+            })
+            .catch(() => {
+              document.getElementById('resume-skeleton').innerHTML =
+                '<p style="color:var(--clr-text-muted)">Could not load resume text.</p>';
+            });
+        </script>
+      {% else %}
+        <div class="detail-panel-body" style="color:var(--clr-text-muted)">Resume not yet generated.</div>
+      {% endif %}
     </div>
   </div>
+
+</div>
 </body>
 </html>

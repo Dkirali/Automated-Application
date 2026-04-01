@@ -2,185 +2,301 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JobBot</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="container">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+<div class="container">
+
+  <!-- Top Bar -->
+  <div class="topbar">
+    <div class="topbar-brand">
       <h1>JobBot</h1>
-      <a href="/settings" style="font-size:13px;color:#6c5ce7;text-decoration:none;">⚙ Settings</a>
+      <span class="status-dot {% if stats.status == 'running' %}running{% endif %}" id="status-indicator" title="{{ stats.status }}"></span>
     </div>
-
-    {% if resume_name %}
-      <p class="subtitle">Resume: <strong>{{ resume_name }}</strong> · <a href="/settings" style="color:#6c5ce7;">change</a></p>
-    {% else %}
-      <p class="subtitle" style="color:#e67e22;">⚠ No resume uploaded — <a href="/settings" style="color:#e67e22;">add one in Settings</a></p>
-    {% endif %}
-
-    {% if alert %}
-      <div class="alert alert-warning">⚠ {{ alert }}</div>
-    {% endif %}
-
-    <div id="status-bar" style="display:none;background:#f0f4ff;border:1px solid #c5d0f5;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#3d52a0;">
-      <span style="margin-right:8px;">⟳</span><span id="status-text"></span>
+    <div class="topbar-actions">
+      <span id="li-pill" class="li-pill {% if linkedin_connected %}li-pill--on{% else %}li-pill--off{% endif %}">
+        <span class="li-pill-dot"></span>
+        <span id="li-pill-label">{% if linkedin_connected %}LinkedIn connected{% else %}LinkedIn disconnected{% endif %}</span>
+        {% if not linkedin_connected %}
+          <button onclick="connectLinkedIn()" id="connect-btn" class="li-pill-btn">Connect</button>
+        {% endif %}
+      </span>
+      <a href="/settings" class="icon-link">⚙ Settings</a>
     </div>
+  </div>
 
-    <!-- Campaign Controls -->
-    <div style="background:white;border:1px solid #dee2e6;border-radius:10px;padding:18px;margin-bottom:24px;">
-      <form method="POST" action="/campaign/start">
+  <!-- Resume subtitle -->
+  {% if resume_name %}
+    <p class="subtitle">Resume: <strong>{{ resume_name }}</strong> · <a href="/settings">change</a></p>
+  {% else %}
+    <p class="subtitle-warn">⚠ No resume uploaded — <a href="/settings" style="color:var(--clr-danger);">add one in Settings</a></p>
+  {% endif %}
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-          <label style="display:flex;flex-direction:column;gap:5px;font-weight:500;font-size:13px;">
-            Job Titles <span style="font-weight:400;color:#868e96;">(comma separated)</span>
-            <input type="text" name="titles" placeholder="Product Manager, Ops Manager" required
-                   style="padding:9px 12px;border:1px solid #dee2e6;border-radius:6px;font-size:13px;">
-          </label>
-          <label style="display:flex;flex-direction:column;gap:5px;font-weight:500;font-size:13px;">
-            Location
-            <input type="text" name="location_text" placeholder="Istanbul, London"
-                   style="padding:9px 12px;border:1px solid #dee2e6;border-radius:6px;font-size:13px;">
-          </label>
-        </div>
+  <!-- Alert -->
+  {% if alert %}
+    <div class="alert alert-warning">⚠ {{ alert }}</div>
+  {% endif %}
 
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
-          <!-- Work Type -->
-          <div>
-            <div style="font-weight:500;font-size:13px;margin-bottom:7px;">Work Type</div>
-            <div style="display:flex;flex-direction:column;gap:5px;">
-              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
-                <input type="checkbox" name="work_type" value="1"> On-site
-              </label>
-              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
-                <input type="checkbox" name="work_type" value="2" checked> Remote
-              </label>
-              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
-                <input type="checkbox" name="work_type" value="3" checked> Hybrid
-              </label>
-            </div>
-          </div>
+  <!-- Live Activity Bar -->
+  <div class="activity-bar {% if stats.status == 'running' %}visible{% endif %}" id="activity-bar">
+    <div class="spinner" id="activity-spinner"></div>
+    <span id="status-text">Starting up…</span>
+  </div>
 
-          <!-- Experience Level -->
-          <div>
-            <div style="font-weight:500;font-size:13px;margin-bottom:7px;">Experience Level</div>
-            <div style="display:flex;flex-direction:column;gap:5px;">
-              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
-                <input type="checkbox" name="exp_level" value="1"> Internship
-              </label>
-              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
-                <input type="checkbox" name="exp_level" value="2"> Entry Level
-              </label>
-              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
-                <input type="checkbox" name="exp_level" value="3"> Associate
-              </label>
-              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
-                <input type="checkbox" name="exp_level" value="4" checked> Mid-Senior
-              </label>
-              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
-                <input type="checkbox" name="exp_level" value="5"> Director
-              </label>
-              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;">
-                <input type="checkbox" name="exp_level" value="6"> Executive
-              </label>
-            </div>
-          </div>
-
-          <!-- Date Posted -->
-          <div>
-            <label style="display:flex;flex-direction:column;gap:7px;font-weight:500;font-size:13px;">
-              Date Posted
-              <select name="date_posted"
-                      style="padding:9px 12px;border:1px solid #dee2e6;border-radius:6px;font-size:13px;background:white;">
-                <option value="">Any time</option>
-                <option value="r86400">Past 24 hours</option>
-                <option value="r604800" selected>Past week</option>
-                <option value="r2592000">Past month</option>
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <div style="display:flex;gap:10px;align-items:center;">
-          <button type="submit" class="btn-start">▶ Start</button>
-          <span style="color:#868e96;font-size:12px;">Max 20 applications per session</span>
-        </div>
-      </form>
-
-      <form method="POST" action="/campaign/stop" style="margin-top:10px;">
-        <button type="submit" class="btn-stop">■ Stop</button>
-      </form>
-    </div>
-
-    <div class="stats-row">
-      <div class="stat-card">
-        <div class="number">{{ stats.applied }}</div>
-        <div class="label">Applied</div>
+  <!-- Stats Row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-icon applied">✓</div>
+      <div class="stat-body">
+        <div class="stat-number">{{ stats.applied }}</div>
+        <div class="stat-label">Applied</div>
       </div>
-      <div class="stat-card">
-        <div class="number">{{ stats.manual }}</div>
-        <div class="label">Manual Needed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon manual">⚠</div>
+      <div class="stat-body">
+        <div class="stat-number">{{ stats.manual }}</div>
+        <div class="stat-label">Manual Queue</div>
       </div>
-      <div class="stat-card">
-        <div class="number" style="color: {% if stats.status == 'running' %}#20bf6b{% else %}#868e96{% endif %}">
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon status">●</div>
+      <div class="stat-body">
+        <div class="stat-number {% if stats.status == 'running' %}running{% elif stats.status == 'paused' %}paused{% endif %}" id="stat-status">
           {{ stats.status | upper }}
         </div>
-        <div class="label">Status</div>
+        <div class="stat-label">Campaign Status</div>
       </div>
     </div>
+  </div>
 
-    <div class="section-title">Applications</div>
-    <div class="card-list">
-      {% for app in applications %}
-        <a class="app-card" href="/application/{{ app.id }}">
-          <div>
-            <strong>{{ app.title }}</strong> · {{ app.company }}
-            <span style="color:#868e96;margin-left:8px;">{{ app.location }}</span>
+  <!-- Campaign Controls -->
+  <div class="campaign-card">
+    <div class="campaign-card-title">New Campaign</div>
+
+    <form method="POST" action="/campaign/start" id="campaign-form">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label" for="titles">Job Titles <span>(comma separated)</span></label>
+          <input class="form-input" type="text" id="titles" name="titles"
+                 placeholder="Product Manager, Ops Manager" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="location_text">Location</label>
+          <input class="form-input" type="text" id="location_text" name="location_text"
+                 placeholder="Istanbul, London">
+        </div>
+      </div>
+
+      <div class="filter-row">
+        <!-- Work Type chips -->
+        <div class="filter-group">
+          <div class="filter-label">Work Type</div>
+          <div class="chip-group">
+            <input type="checkbox" id="wt1" name="work_type" value="1">
+            <label for="wt1">On-site</label>
+            <input type="checkbox" id="wt2" name="work_type" value="2" checked>
+            <label for="wt2">Remote</label>
+            <input type="checkbox" id="wt3" name="work_type" value="3" checked>
+            <label for="wt3">Hybrid</label>
           </div>
+        </div>
+
+        <!-- Experience Level chips -->
+        <div class="filter-group">
+          <div class="filter-label">Experience Level</div>
+          <div class="chip-group">
+            <input type="checkbox" id="el1" name="exp_level" value="1">
+            <label for="el1">Internship</label>
+            <input type="checkbox" id="el2" name="exp_level" value="2">
+            <label for="el2">Entry</label>
+            <input type="checkbox" id="el3" name="exp_level" value="3">
+            <label for="el3">Associate</label>
+            <input type="checkbox" id="el4" name="exp_level" value="4" checked>
+            <label for="el4">Mid-Senior</label>
+            <input type="checkbox" id="el5" name="exp_level" value="5">
+            <label for="el5">Director</label>
+            <input type="checkbox" id="el6" name="exp_level" value="6">
+            <label for="el6">Executive</label>
+          </div>
+        </div>
+
+        <!-- Date Posted -->
+        <div class="filter-group">
+          <div class="filter-label">Date Posted</div>
+          <select class="form-select" name="date_posted">
+            <option value="">Any time</option>
+            <option value="r86400">Past 24 hours</option>
+            <option value="r604800" selected>Past week</option>
+            <option value="r2592000">Past month</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="campaign-actions">
+        <button type="submit" class="btn-start">▶ Start</button>
+        <span class="campaign-hint">Max 20 applications per session</span>
+      </div>
+    </form>
+
+    <form method="POST" action="/campaign/stop" style="margin-top:10px;">
+      <button type="submit" class="btn-stop">■ Stop</button>
+    </form>
+  </div>
+
+  <!-- Pending Review -->
+  {% if pending_jobs %}
+    <div class="section-title section-title--pending">
+      Pending Review
+      <span class="section-badge">{{ pending_jobs | length }}</span>
+    </div>
+    <div class="card-list pending-list">
+      {% for job in pending_jobs %}
+        <a class="app-card app-card--pending" href="/review/{{ job.id }}">
+          <div class="app-card-body">
+            <div class="app-card-title">{{ job.title }}</div>
+            <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
+            {% if job.fit_summary %}
+              <div class="app-card-verdict">{{ job.fit_summary | truncate(100) }}</div>
+            {% endif %}
+          </div>
+          <div class="app-card-right">
+            {% if job.ats_score %}
+              {% set score = job.ats_score %}
+              {% set score_class = 'high' if score >= 70 else ('medium' if score >= 40 else 'low') %}
+              <div class="ats-mini">
+                <span class="ats-mini-label">ATS {{ score }}%</span>
+                <div class="ats-bar-wrap">
+                  <div class="ats-bar-fill {{ score_class }}" style="width:{{ score }}%"></div>
+                </div>
+              </div>
+            {% endif %}
+            <span class="badge badge-pending">Review →</span>
+          </div>
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <!-- Applications -->
+  <div class="section-title">Applications</div>
+  <div class="card-list">
+    {% for app in applications %}
+      {% set score = app.ats_score or 0 %}
+      {% set score_class = 'high' if score >= 70 else ('medium' if score >= 40 else 'low') %}
+      <a class="app-card" href="/application/{{ app.id }}">
+        <div class="app-card-body">
+          <div class="app-card-title">{{ app.title }}</div>
+          <div class="app-card-meta">{{ app.company }}{% if app.location %} · {{ app.location }}{% endif %}</div>
+        </div>
+        <div class="app-card-right">
+          {% if app.ats_score %}
+            <div class="ats-mini">
+              <span class="ats-mini-label">ATS {{ app.ats_score }}%</span>
+              <div class="ats-bar-wrap">
+                <div class="ats-bar-fill {{ score_class }}" style="width:{{ app.ats_score }}%"></div>
+              </div>
+            </div>
+          {% endif %}
           <span class="badge badge-{{ app.status }}">
             {% if app.status == 'applied' %}✓ Applied
             {% elif app.status == 'failed' %}✗ Failed
-            {% endif %}
+            {% else %}{{ app.status }}{% endif %}
           </span>
-        </a>
-      {% else %}
-        <p style="color:#868e96;">No applications yet. Start a campaign above.</p>
-      {% endfor %}
-    </div>
-
-    {% if manual_queue %}
-      <div class="section-title" style="margin-top:24px;">Manual Queue</div>
-      <div class="card-list">
-        {% for job in manual_queue %}
-          <div class="app-card" style="cursor:default;">
-            <div>
-              <strong>{{ job.title }}</strong> · {{ job.company }}
-              <span style="color:#868e96;margin-left:8px;">{{ job.location }}</span>
-            </div>
-            <a href="{{ job.url }}" target="_blank" class="badge badge-manual">⚠ Apply Manually</a>
-          </div>
-        {% endfor %}
+        </div>
+      </a>
+    {% else %}
+      <div class="empty-state">
+        <div class="empty-state-icon">📋</div>
+        <div class="empty-state-text">No applications yet</div>
+        <div class="empty-state-hint">Start a campaign above to begin applying</div>
       </div>
-    {% endif %}
+    {% endfor %}
   </div>
 
-  <script>
-    const bar = document.getElementById('status-bar');
-    const txt = document.getElementById('status-text');
-    function pollStatus() {
-      fetch('/status')
-        .then(r => r.json())
-        .then(data => {
-          if (data.status && data.status !== 'Idle') {
-            txt.textContent = data.status;
-            bar.style.display = 'block';
-          } else {
-            bar.style.display = 'none';
-          }
-        })
-        .catch(() => {});
+  <!-- Manual Queue -->
+  {% if manual_queue %}
+    <div class="section-title" style="margin-top:28px;">Manual Queue</div>
+    <div class="card-list">
+      {% for job in manual_queue %}
+        <div class="app-card" style="cursor:default;">
+          <div class="app-card-body">
+            <div class="app-card-title">{{ job.title }}</div>
+            <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
+          </div>
+          <a href="{{ job.url }}" target="_blank" class="badge badge-manual">⚠ Apply Manually</a>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+</div>
+
+<script>
+  const activityBar   = document.getElementById('activity-bar');
+  const statusText    = document.getElementById('status-text');
+  const statusDot     = document.getElementById('status-indicator');
+  const statStatus    = document.getElementById('stat-status');
+
+  function applyRunningState(isRunning) {
+    if (isRunning) {
+      activityBar.classList.add('visible');
+      statusDot.classList.add('running');
+    } else {
+      activityBar.classList.remove('visible');
+      statusDot.classList.remove('running');
     }
-    setInterval(pollStatus, 2000);
-    pollStatus();
-  </script>
+  }
+
+  function connectLinkedIn() {
+    const btn   = document.getElementById('connect-btn');
+    const pill  = document.getElementById('li-pill');
+    const label = document.getElementById('li-pill-label');
+    btn.disabled = true;
+    btn.textContent = 'Opening…';
+    fetch('/linkedin-connect', { method: 'POST' }).then(() => {
+      label.textContent = 'Log in & close Chrome window…';
+      const check = setInterval(() => {
+        fetch('/linkedin-status').then(r => r.json()).then(d => {
+          if (d.connected) {
+            clearInterval(check);
+            pill.classList.remove('li-pill--off');
+            pill.classList.add('li-pill--on');
+            label.textContent = 'LinkedIn connected';
+            btn.remove();
+          }
+        });
+      }, 2000);
+    });
+  }
+
+  function pollStatus() {
+    fetch('/status')
+      .then(r => r.json())
+      .then(data => {
+        const running = data.status && data.status !== 'Idle';
+        applyRunningState(running);
+        if (running) statusText.textContent = data.status;
+      })
+      .catch(() => {});
+  }
+
+  // Show file name when resume is picked
+  const fileInput = document.querySelector('input[type="file"]');
+  if (fileInput) {
+    fileInput.addEventListener('change', e => {
+      const name = e.target.files[0]?.name;
+      if (name) {
+        const hint = fileInput.closest('.file-drop')?.querySelector('.file-drop-text');
+        if (hint) hint.textContent = '📄 ' + name;
+      }
+    });
+  }
+
+  setInterval(pollStatus, 2000);
+  pollStatus();
+</script>
 </body>
 </html>
