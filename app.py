@@ -7,7 +7,7 @@ from db.database import (
     init_db, get_config, is_setup_complete, set_config,
     create_campaign, update_campaign_status, get_active_campaign,
     insert_manual, get_all_applications, get_manual_queue, get_seen_urls,
-    update_application
+    update_application, insert_application
 )
 
 load_dotenv()
@@ -124,15 +124,50 @@ def application_detail(app_id):
 
 
 def run_campaign(campaign_id: int, titles: list, locations: list, stop_event):
-    """Background thread: scrape + submit jobs until stopped."""
+    """Background thread: scrape LinkedIn and queue jobs until stopped."""
     global _alert
+    from engine.scraper import scrape_jobs
+
     seen_urls = get_seen_urls()
     apps_this_session = 0
-    consecutive_failures = 0
 
     while not stop_event.is_set():
-        # Scraper and submitter wired in later tasks
-        stop_event.wait(timeout=300)
+        try:
+            jobs = scrape_jobs(titles, locations, seen_urls, stop_event)
+        except Exception as e:
+            _alert = f"Scraper error: {e}"
+            break
+
+        for job in jobs:
+            if stop_event.is_set():
+                break
+
+            if apps_this_session >= 20:
+                update_campaign_status(campaign_id, "paused", "session_limit")
+                _alert = "Paused after 20 applications. Hit Start to continue."
+                return
+
+            if not job.get("easy_apply"):
+                insert_manual(
+                    campaign_id, job.get("company", ""), job.get("title", ""),
+                    job.get("location", ""), job["url"], "not_easy_apply"
+                )
+                continue
+
+            app_id = insert_application(
+                campaign_id, job.get("company", ""), job.get("title", ""),
+                job.get("location", ""), job["url"], job.get("job_description", "")
+            )
+            if app_id is None:
+                continue  # duplicate URL
+
+            # Resume tailoring + submission wired in Tasks 8 and 11
+            update_application(app_id, "applied")
+            apps_this_session += 1
+
+        if not jobs:
+            # No new jobs found — wait 5 minutes before re-scraping
+            stop_event.wait(timeout=300)
 
     campaign = get_active_campaign()
     if campaign and campaign["status"] == "running":
