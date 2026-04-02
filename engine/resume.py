@@ -20,7 +20,9 @@ Respond in this exact format (no extra text):
 FIT_SCORE: <0-100>
 STRENGTHS: <comma-separated list of 2-4 matching skills or experiences>
 GAPS: <comma-separated list of 1-3 missing skills, or "None">
-VERDICT: <one sentence — would you recommend applying? why?>"""
+VERDICT: <one sentence — would you recommend applying? why?>
+JD_SUMMARY: <2-3 sentence summary of the role, seniority level, and key focus areas>
+JD_KEYWORDS: keyword1, keyword2, keyword3, ... <8-12 most important ATS/skills keywords from the job posting>"""
 
 TAILOR_PROMPT = """You are an expert resume writer specialising in ATS optimisation.
 
@@ -34,11 +36,17 @@ Task:
 1. Extract the 8-12 most important ATS keywords from the job posting (skills, tools, methodologies, titles).
 2. Rewrite the resume experience bullet points to naturally incorporate these keywords where truthful.
 3. Do NOT invent experience. Only rephrase existing content to better match the posting.
+4. Format the RESUME block using Markdown:
+   - Use ## for section headings (EXPERIENCE, EDUCATION, SKILLS, etc.)
+   - Use **Name** and **Job Title** for the candidate name and role titles
+   - Use - for bullet points in experience sections
+   - Use > for a profile/summary block if present
+   - Do NOT use HTML tags
 
 Respond in this exact format:
 KEYWORDS: keyword1, keyword2, keyword3, ...
 RESUME:
-[Full rewritten resume text, preserving all sections and structure]"""
+[Full rewritten resume in Markdown format, preserving all sections and structure]"""
 
 
 def extract_keywords_from_response(response_text: str) -> list[str]:
@@ -59,6 +67,24 @@ def calculate_ats_score(keywords: list[str], resume_text: str) -> int:
     text_lower = resume_text.lower()
     matched = sum(1 for kw in keywords if kw.lower() in text_lower)
     return round((matched / len(keywords)) * 100)
+
+
+def calculate_original_ats_score(keywords: list[str], master_resume_path: str) -> int:
+    """Compute ATS score against the unmodified master resume."""
+    master_path = Path(master_resume_path)
+    if not master_path.exists() or not keywords:
+        return 0
+    original_text = read_resume_text(master_path)
+    return calculate_ats_score(keywords, original_text)
+
+
+def strip_markdown(text: str) -> str:
+    """Remove Markdown markers before writing to .docx (keeps download clean)."""
+    text = re.sub(r'^#{1,3}\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.*?)\*', r'\1', text)
+    text = re.sub(r'^>\s*', '', text, flags=re.MULTILINE)
+    return text
 
 
 ALLOWED_EXTENSIONS = {".docx", ".doc", ".pdf"}
@@ -225,8 +251,10 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
     tailored_text = extract_resume_from_response(response_text)
     if not tailored_text:
         tailored_text = resume_text  # fallback: use original if parse failed
-    # ATS score = % of job keywords present in the tailored resume
+
+    # Score against tailored (Markdown) text and original master
     ats_score = calculate_ats_score(keywords, tailored_text)
+    original_ats_score = calculate_original_ats_score(keywords, master_resume_path)
 
     job_dir = RESUMES_DIR / str(job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -234,7 +262,8 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
     docx_path = job_dir / "tailored.docx"
     pdf_path = job_dir / "tailored.pdf"
 
-    write_tailored_docx(master_path, tailored_text, docx_path)
+    # Strip Markdown before writing .docx so the download is clean plain text
+    write_tailored_docx(master_path, strip_markdown(tailored_text), docx_path)
 
     try:
         export_pdf(docx_path, pdf_path)
@@ -243,7 +272,10 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
 
     return {
         "keywords": keywords,
+        "keywords_str": ", ".join(keywords),
         "ats_score": ats_score,
+        "original_ats_score": original_ats_score,
+        "tailored_text": tailored_text,  # Markdown version for in-browser display
         "docx_path": str(docx_path),
         "pdf_path": str(pdf_path) if pdf_path else None,
     }
@@ -278,9 +310,11 @@ def generate_fit_summary(job_description: str, master_resume_path: str) -> dict:
         raise RuntimeError(f"LLM API error: {e}") from e
 
     return {
-        "fit_score":  parse_fit_score(raw),
-        "strengths":  [s.strip() for s in parse_fit_field(raw, "STRENGTHS").split(",") if s.strip()],
-        "gaps":       [g.strip() for g in parse_fit_field(raw, "GAPS").split(",") if g.strip()],
-        "verdict":    parse_fit_field(raw, "VERDICT"),
-        "raw":        raw,
+        "fit_score":    parse_fit_score(raw),
+        "strengths":    [s.strip() for s in parse_fit_field(raw, "STRENGTHS").split(",") if s.strip()],
+        "gaps":         [g.strip() for g in parse_fit_field(raw, "GAPS").split(",") if g.strip()],
+        "verdict":      parse_fit_field(raw, "VERDICT"),
+        "jd_summary":   parse_fit_field(raw, "JD_SUMMARY"),
+        "jd_keywords":  parse_fit_field(raw, "JD_KEYWORDS"),
+        "raw":          raw,
     }
