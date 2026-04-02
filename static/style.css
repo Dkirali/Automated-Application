@@ -1191,9 +1191,143 @@ mark.kw-highlight {
 }
 .btn-back-dash:hover { color: var(--clr-primary); }
 
+/* ─── Hero Topbar (dashboard) ────────────────────────────────────────────── */
+.topbar--hero {
+  background: linear-gradient(135deg, var(--clr-primary) 0%, #a29bfe 55%, #fd79a8 100%);
+  margin: -28px -20px 20px;
+  padding: 18px 28px;
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+  box-shadow: 0 4px 24px rgba(108,92,231,.28);
+}
+.topbar--hero .topbar-brand h1 {
+  background: none;
+  -webkit-text-fill-color: white;
+  color: white;
+}
+.topbar--hero .status-dot { background: rgba(255,255,255,.5); }
+.topbar--hero .status-dot.running { background: #55efc4; }
+.topbar--hero .icon-link { color: rgba(255,255,255,.85); }
+.topbar--hero .icon-link:hover { color: white; text-decoration: none; }
+.topbar--hero .li-pill--on {
+  background: rgba(255,255,255,.2);
+  color: white;
+  border-color: rgba(255,255,255,.35);
+}
+.topbar--hero .li-pill--off {
+  background: rgba(255,255,255,.15);
+  color: rgba(255,255,255,.9);
+  border-color: rgba(255,255,255,.3);
+}
+.topbar--hero .li-pill-btn {
+  background: white;
+  color: var(--clr-primary);
+}
+.topbar--hero .li-pill-btn:hover { background: #f0effe; }
+
+/* ─── Stat cards: micro-lift on hover ────────────────────────────────────── */
+.stat-card {
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+.stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+
+/* ─── Apply button: glow on hover ────────────────────────────────────────── */
+.btn-apply {
+  transition: background var(--transition), box-shadow var(--transition), transform var(--transition);
+}
+.btn-apply:hover {
+  background: #00a381;
+  box-shadow: 0 4px 16px rgba(0,184,148,.4);
+  transform: translateY(-1px);
+}
+
+/* ─── Pending card: gradient sweep on hover ──────────────────────────────── */
+.app-card--pending {
+  position: relative;
+  overflow: hidden;
+}
+.app-card--pending::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, var(--clr-primary-tint) 0%, transparent 60%);
+  opacity: 0;
+  transition: opacity var(--transition);
+  pointer-events: none;
+}
+.app-card--pending:hover::before { opacity: 1; }
+
+/* ─── Dual ATS mini-bars on dashboard cards ──────────────────────────────── */
+.ats-dual-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 110px;
+}
+.ats-dual-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ats-dual-label {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--clr-text-subtle);
+  width: 28px;
+  flex-shrink: 0;
+}
+.ats-bar-wrap--sm { width: 52px; }
+.ats-dual-pct {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--clr-text-muted);
+  width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.ats-dual-pct--high   { color: var(--clr-success); }
+.ats-dual-pct--medium { color: #e8a838; }
+.ats-dual-pct--low    { color: var(--clr-danger); }
+
+/* ─── Illustrated empty state ────────────────────────────────────────────── */
+.empty-state--illustrated { padding: 48px 20px 56px; }
+.empty-state-art {
+  position: relative;
+  display: inline-block;
+  margin-bottom: 14px;
+  line-height: 1;
+}
+.empty-state-bot { font-size: 52px; }
+.empty-state-sparkles {
+  position: absolute;
+  top: -8px;
+  right: -16px;
+  font-size: 22px;
+  animation: sparkle 2.4s ease-in-out infinite;
+}
+@keyframes sparkle {
+  0%, 100% { transform: scale(1) rotate(0deg);   opacity: .7; }
+  50%       { transform: scale(1.3) rotate(15deg); opacity: 1; }
+}
+.empty-state--illustrated .empty-state-text {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--clr-text);
+  margin-bottom: 6px;
+}
+.empty-state--illustrated .empty-state-hint {
+  font-size: 13px;
+  color: var(--clr-text-muted);
+  max-width: 360px;
+  margin: 0 auto;
+  line-height: 1.65;
+}
+
 /* ─── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 680px) {
   .container { padding: 16px 14px 48px; }
+  .topbar--hero { margin: -16px -14px 16px; padding: 14px 18px; border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
   .stats-row { grid-template-columns: 1fr 1fr; }
   .stats-row .stat-card:last-child { grid-column: span 2; }
   .form-row { grid-template-columns: 1fr; }
@@ -1204,6 +1338,7 @@ mark.kw-highlight {
   .topbar-brand h1 { font-size: 18px; }
   .review-grid { grid-template-columns: 1fr; }
   .review-header { flex-direction: column; align-items: flex-start; }
+  .ats-comparison { align-self: flex-start; }
   .review-actions { flex-wrap: wrap; }
   .btn-back-dash { margin-left: 0; }
 }
