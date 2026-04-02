@@ -9,7 +9,7 @@ from db.database import (
     create_campaign, update_campaign_status, get_active_campaign,
     insert_manual, get_all_applications, get_manual_queue, get_seen_urls,
     update_application, insert_application, get_pending_jobs, mark_applied,
-    get_application
+    get_application, get_all_campaigns
 )
 
 from engine.resume import tailor_resume, generate_fit_summary
@@ -118,11 +118,13 @@ def dashboard():
     resume_path = get_config("master_resume_path")
     resume_name = Path(resume_path).name if resume_path else None
     pending = get_pending_jobs()
+    campaigns = get_all_campaigns()
     return render_template("dashboard.html",
                            linkedin_connected=_linkedin_connected(),
                            applications=applications,
                            pending_jobs=pending,
                            manual_queue=manual,
+                           campaigns=campaigns,
                            stats=stats,
                            alert=_alert,
                            resume_name=resume_name)

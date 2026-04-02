@@ -1290,6 +1290,76 @@ mark.kw-highlight {
 .ats-dual-pct--medium { color: #e8a838; }
 .ats-dual-pct--low    { color: var(--clr-danger); }
 
+/* ─── Campaign History ───────────────────────────────────────────────────── */
+.campaign-history {
+  margin-top: 28px;
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius-lg);
+  background: var(--clr-surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.campaign-history-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--clr-text-muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  background: var(--clr-bg);
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--transition), color var(--transition);
+}
+.campaign-history-summary::-webkit-details-marker { display: none; }
+.campaign-history-summary::before { content: '▸ '; font-size: 10px; }
+.campaign-history[open] .campaign-history-summary::before { content: '▾ '; }
+.campaign-history[open] .campaign-history-summary { border-bottom-color: var(--clr-border); color: var(--clr-text); }
+.campaign-history-summary:hover { color: var(--clr-primary); }
+.campaign-history-list { padding: 8px 0; }
+.campaign-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  gap: 12px;
+  border-bottom: 1px solid var(--clr-border);
+  transition: background var(--transition);
+}
+.campaign-row:last-child { border-bottom: none; }
+.campaign-row:hover { background: var(--clr-bg); }
+.campaign-row-body { flex: 1; min-width: 0; }
+.campaign-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--clr-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.campaign-row-meta { font-size: 11px; color: var(--clr-text-muted); margin-top: 1px; }
+.campaign-row-stats { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.campaign-stat { font-size: 11px; font-weight: 700; }
+.campaign-stat--applied   { color: var(--clr-success); }
+.campaign-stat--pending   { color: var(--clr-primary); }
+.campaign-stat--discarded { color: var(--clr-text-subtle); }
+.campaign-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+.campaign-badge--running { background: var(--clr-success-tint); color: #0a7060; }
+.campaign-badge--stopped { background: #f1f1f1; color: var(--clr-text-muted); }
+.campaign-badge--idle    { background: var(--clr-warning-tint); color: var(--clr-warning-text); }
+
 /* ─── Illustrated empty state ────────────────────────────────────────────── */
 .empty-state--illustrated { padding: 48px 20px 56px; }
 .empty-state-art {
