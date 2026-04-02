@@ -42,9 +42,9 @@
       {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
       {% set tail_class = 'high' if tail >= 70 else ('medium' if tail >= 40 else 'low') %}
       {% set circ = 125.66 %}
-      {% set orig_dash = (orig / 100) * circ %}
+      {% set orig_dash = [((orig / 100) * circ), 2] | max %}
       {% set orig_gap  = circ - orig_dash %}
-      {% set tail_dash = (tail / 100) * circ %}
+      {% set tail_dash = [((tail / 100) * circ), 2] | max %}
       {% set tail_gap  = circ - tail_dash %}
       {% set delta = tail - orig %}
 
@@ -231,6 +231,10 @@ function esc(s) {
 function inlineBold(s) {
   return s.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
 }
+function isAllCapsHeading(line) {
+  const t = line.trim();
+  return t.length >= 3 && t === t.toUpperCase() && /[A-Z]/.test(t) && !/[a-z]/.test(t) && !t.startsWith('-') && !t.startsWith('#');
+}
 function renderMarkdown(text) {
   const lines = text.split('\n');
   let html = '';
@@ -245,6 +249,8 @@ function renderMarkdown(text) {
       html += `<p class="resume-bullet">&bull; ${inlineBold(esc(line.slice(2)))}</p>`;
     else if (line.trim() === '')
       html += '<div class="resume-spacer"></div>';
+    else if (isAllCapsHeading(line))
+      html += `<h3 class="resume-section">${esc(line.trim())}</h3>`;
     else
       html += `<p class="resume-line">${inlineBold(esc(line))}</p>`;
   }

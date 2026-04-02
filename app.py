@@ -331,8 +331,9 @@ def review_job(app_id):
     if not job.get("fit_summary") and job.get("job_description") and master_path:
         try:
             fit = generate_fit_summary(job["job_description"], master_path)
+            # Store the raw LLM output in fit_summary so strengths/gaps can be re-parsed on revisit
             update_application(app_id, "pending",
-                               fit_summary=fit["verdict"],
+                               fit_summary=fit["raw"],
                                jd_summary=fit.get("jd_summary"))
             job = get_application(app_id)  # refresh
         except Exception as e:
@@ -353,12 +354,15 @@ def review_job(app_id):
             pass
 
     # Reconstruct fit dict from DB when returning to a cached review
+    # fit_summary stores the raw LLM response; re-parse it to recover strengths/gaps
     if fit is None:
+        from engine.resume import parse_fit_score, parse_fit_field
+        raw = job.get("fit_summary", "")
         fit = {
-            "fit_score": job.get("ats_score", 0),
-            "strengths": [],
-            "gaps": [],
-            "verdict": job.get("fit_summary", ""),
+            "fit_score":  parse_fit_score(raw),
+            "strengths":  [s.strip() for s in parse_fit_field(raw, "STRENGTHS").split(",") if s.strip()],
+            "gaps":       [g.strip() for g in parse_fit_field(raw, "GAPS").split(",") if g.strip()],
+            "verdict":    parse_fit_field(raw, "VERDICT") or raw,
             "jd_summary": job.get("jd_summary"),
             "jd_keywords": job.get("keywords"),
         }
