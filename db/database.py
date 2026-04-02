@@ -24,6 +24,9 @@ def _migrate(conn):
         "ALTER TABLE applications ADD COLUMN fit_summary TEXT",
         "ALTER TABLE applications ADD COLUMN easy_apply INTEGER DEFAULT 1",
         "ALTER TABLE applications ADD COLUMN created_at TEXT",
+        "ALTER TABLE applications ADD COLUMN original_ats_score INTEGER",
+        "ALTER TABLE applications ADD COLUMN keywords TEXT",
+        "ALTER TABLE applications ADD COLUMN jd_summary TEXT",
     ]
     for sql in migrations:
         try:
@@ -168,12 +171,21 @@ def get_seen_urls() -> set:
         return apps | manual
 
 def update_application(app_id: int, status: str, ats_score: int = None,
-                       resume_path: str = None, fit_summary: str = None):
+                       resume_path: str = None, fit_summary: str = None,
+                       original_ats_score: int = None, keywords: str = None,
+                       jd_summary: str = None):
     with get_conn() as conn:
         conn.execute(
-            "UPDATE applications SET status=?, ats_score=COALESCE(?,ats_score), "
-            "resume_path=COALESCE(?,resume_path), fit_summary=COALESCE(?,fit_summary) WHERE id=?",
-            (status, ats_score, resume_path, fit_summary, app_id)
+            "UPDATE applications SET status=?, "
+            "ats_score=COALESCE(?,ats_score), "
+            "resume_path=COALESCE(?,resume_path), "
+            "fit_summary=COALESCE(?,fit_summary), "
+            "original_ats_score=COALESCE(?,original_ats_score), "
+            "keywords=COALESCE(?,keywords), "
+            "jd_summary=COALESCE(?,jd_summary) "
+            "WHERE id=?",
+            (status, ats_score, resume_path, fit_summary,
+             original_ats_score, keywords, jd_summary, app_id)
         )
 
 
