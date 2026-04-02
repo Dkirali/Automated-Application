@@ -22,43 +22,93 @@
   <!-- Job Header -->
   <div class="review-header">
     <div class="review-header-body">
-      <h1 class="review-title">{{ job.title }}</h1>
+      <div class="review-header-top">
+        <h1 class="review-title">{{ job.title }}</h1>
+        {% if fit and fit.fit_score %}
+          {% set fs = fit.fit_score %}
+          {% set fs_class = 'fit-score--high' if fs >= 70 else ('fit-score--medium' if fs >= 40 else 'fit-score--low') %}
+          <span class="fit-score-badge {{ fs_class }}">{{ fs }}% fit</span>
+        {% endif %}
+      </div>
       <p class="review-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</p>
       <a href="{{ job.url }}" target="_blank" class="review-link">View on LinkedIn ↗</a>
     </div>
 
-    <!-- ATS Ring -->
-    {% if job.ats_score %}
-      {% set score = job.ats_score %}
-      {% set circumference = 125.66 %}
-      {% set dash = (score / 100) * circumference %}
-      {% set gap = circumference - dash %}
-      {% set score_class = 'high' if score >= 70 else ('medium' if score >= 40 else 'low') %}
-      <div class="ats-ring-wrap">
-        <svg class="ats-ring" viewBox="0 0 48 48" width="80" height="80">
-          <circle class="ats-ring-bg" cx="24" cy="24" r="20" />
-          <circle class="ats-ring-fill {{ score_class }}"
+    <!-- Dual ATS Rings -->
+    <div class="ats-comparison">
+      <!-- Original score -->
+      {% set orig = job.original_ats_score or 0 %}
+      {% set tail = job.ats_score or 0 %}
+      {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
+      {% set tail_class = 'high' if tail >= 70 else ('medium' if tail >= 40 else 'low') %}
+      {% set circ = 125.66 %}
+      {% set orig_dash = (orig / 100) * circ %}
+      {% set orig_gap  = circ - orig_dash %}
+      {% set tail_dash = (tail / 100) * circ %}
+      {% set tail_gap  = circ - tail_dash %}
+      {% set delta = tail - orig %}
+
+      <div class="ats-ring-wrap ats-ring-wrap--original">
+        <svg class="ats-ring" viewBox="0 0 48 48" width="72" height="72">
+          <defs>
+            <linearGradient id="orig-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#b2bec3"/>
+              <stop offset="100%" stop-color="#636e72"/>
+            </linearGradient>
+          </defs>
+          <circle class="ats-ring-bg" cx="24" cy="24" r="20"/>
+          <circle class="ats-ring-fill {{ orig_class }}"
                   cx="24" cy="24" r="20"
-                  stroke-dasharray="{{ dash }} {{ gap }}"
-                  stroke-dashoffset="31.415" />
+                  stroke-dasharray="{{ orig_dash }} {{ orig_gap }}"
+                  stroke-dashoffset="31.415"/>
         </svg>
         <div class="ats-ring-label">
-          <span class="ats-ring-number">{{ score }}</span>
-          <span class="ats-ring-unit">ATS</span>
+          <span class="ats-ring-number" data-target="{{ orig }}">0</span>
+          <span class="ats-ring-unit">Original</span>
         </div>
       </div>
-    {% else %}
-      <div class="ats-ring-wrap ats-ring-wrap--loading">
-        <div class="ats-ring-placeholder">
-          <span class="ats-ring-number">—</span>
-          <span class="ats-ring-unit">ATS</span>
+
+      <!-- Delta indicator -->
+      <div class="ats-delta">
+        <span class="ats-delta-arrow">→</span>
+        <span class="ats-delta-value {% if delta > 0 %}positive{% elif delta < 0 %}negative{% endif %}">
+          {% if delta > 0 %}+{% endif %}{{ delta }}%
+        </span>
+      </div>
+
+      <!-- Tailored score -->
+      <div class="ats-ring-wrap ats-ring-wrap--tailored">
+        <svg class="ats-ring" viewBox="0 0 48 48" width="72" height="72">
+          <defs>
+            <linearGradient id="tail-grad-high" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#55efc4"/>
+              <stop offset="100%" stop-color="#00b894"/>
+            </linearGradient>
+            <linearGradient id="tail-grad-medium" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#fddb92"/>
+              <stop offset="100%" stop-color="#e8a838"/>
+            </linearGradient>
+            <linearGradient id="tail-grad-low" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#fd9b9b"/>
+              <stop offset="100%" stop-color="#e17055"/>
+            </linearGradient>
+          </defs>
+          <circle class="ats-ring-bg" cx="24" cy="24" r="20"/>
+          <circle class="ats-ring-fill {{ tail_class }} tailored-fill"
+                  cx="24" cy="24" r="20"
+                  stroke-dasharray="{{ tail_dash }} {{ tail_gap }}"
+                  stroke-dashoffset="31.415"/>
+        </svg>
+        <div class="ats-ring-label">
+          <span class="ats-ring-number" data-target="{{ tail }}">0</span>
+          <span class="ats-ring-unit">Tailored</span>
         </div>
       </div>
-    {% endif %}
+    </div>
   </div>
 
   <!-- Fit Analysis Bar -->
-  {% if fit %}
+  {% if fit and (fit.strengths or fit.gaps or fit.verdict) %}
     <div class="fit-bar">
       {% if fit.strengths %}
         <div class="fit-section">
@@ -94,15 +144,37 @@
   <!-- Two-panel review grid -->
   <div class="review-grid">
 
-    <!-- Left: Job Description -->
+    <!-- Left: Job Description (smart summary) -->
     <div class="review-panel">
       <div class="review-panel-header">
-        <span class="review-panel-title">Job Description</span>
+        <span class="review-panel-title">Job Brief</span>
       </div>
       <div class="review-panel-body">
+        {% set jd_summary = fit.jd_summary if fit else job.get('jd_summary') %}
+        {% set jd_keywords = fit.jd_keywords if fit else job.get('keywords') %}
+
+        {% if jd_summary %}
+          <div class="jd-summary-card">
+            <p class="jd-summary-text">{{ jd_summary }}</p>
+          </div>
+        {% endif %}
+
+        {% if jd_keywords %}
+          <div class="jd-keyword-chips">
+            {% for kw in jd_keywords.split(',') %}
+              {% if kw.strip() %}
+                <span class="jd-keyword-chip">{{ kw.strip() }}</span>
+              {% endif %}
+            {% endfor %}
+          </div>
+        {% endif %}
+
         {% if job.job_description %}
-          <pre class="jd-text">{{ job.job_description }}</pre>
-        {% else %}
+          <details class="jd-full-toggle">
+            <summary>Show full description</summary>
+            <pre class="jd-text">{{ job.job_description }}</pre>
+          </details>
+        {% elif not jd_summary %}
           <p class="empty-note">No description available.</p>
         {% endif %}
       </div>
@@ -112,29 +184,28 @@
     <div class="review-panel">
       <div class="review-panel-header">
         <span class="review-panel-title">Tailored Resume</span>
-        {% if job.resume_path %}
-          <a href="/download/{{ job.id }}" class="panel-action-btn">↓ Download</a>
-        {% endif %}
+        <div class="panel-header-actions">
+          {% if job.resume_path %}
+            <a href="/download/{{ job.id }}" class="panel-action-btn">↓ Download</a>
+          {% endif %}
+          <form method="POST" action="/retailor/{{ job.id }}" style="display:inline">
+            <button type="submit" class="panel-action-btn panel-action-btn--secondary" title="Re-generate tailored resume">↺ Re-tailor</button>
+          </form>
+        </div>
       </div>
-      <div class="review-panel-body" id="resume-panel">
-        {% if job.resume_path %}
-          <div id="resume-skeleton">
-            <div class="skeleton-line" style="width:80%"></div>
-            <div class="skeleton-line" style="width:60%"></div>
-            <div class="skeleton-line" style="width:70%"></div>
-            <div class="skeleton-line" style="width:50%"></div>
-            <div class="skeleton-line" style="width:65%"></div>
-            <div class="skeleton-line" style="width:75%"></div>
-          </div>
-          <pre class="jd-text" id="resume-text" style="display:none"></pre>
-        {% else %}
-          <div id="resume-skeleton">
-            <div class="skeleton-line" style="width:70%"></div>
-            <div class="skeleton-line" style="width:55%"></div>
-            <div class="skeleton-line" style="width:40%"></div>
-          </div>
-          <p class="empty-note" id="resume-unavailable" style="display:none">Resume tailoring in progress…</p>
-        {% endif %}
+      <div class="review-panel-body" id="resume-panel-body">
+        <div id="resume-skeleton">
+          <div class="skeleton-line" style="width:55%"></div>
+          <div class="skeleton-line" style="width:80%"></div>
+          <div class="skeleton-line" style="width:70%"></div>
+          <div class="skeleton-line" style="width:65%"></div>
+          <div class="skeleton-line" style="width:90%"></div>
+          <div class="skeleton-line" style="width:50%"></div>
+          <div class="skeleton-line" style="width:75%"></div>
+          <div class="skeleton-line" style="width:60%"></div>
+        </div>
+        <div class="resume-rendered" id="resume-rendered" style="display:none"></div>
+        <p class="empty-note" id="resume-error" style="display:none">Could not load resume.</p>
       </div>
     </div>
   </div>
@@ -153,40 +224,105 @@
 </div>
 
 <script>
-  {% if job.resume_path %}
+/* ── Minimal Markdown → HTML renderer ──────────────────────────── */
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function inlineBold(s) {
+  return s.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+}
+function renderMarkdown(text) {
+  const lines = text.split('\n');
+  let html = '';
+  for (const line of lines) {
+    if (line.startsWith('## '))
+      html += `<h3 class="resume-section">${esc(line.slice(3))}</h3>`;
+    else if (line.startsWith('# '))
+      html += `<h2 class="resume-name">${esc(line.slice(2))}</h2>`;
+    else if (line.startsWith('> '))
+      html += `<p class="resume-summary">${inlineBold(esc(line.slice(2)))}</p>`;
+    else if (line.startsWith('- '))
+      html += `<p class="resume-bullet">&bull; ${inlineBold(esc(line.slice(2)))}</p>`;
+    else if (line.trim() === '')
+      html += '<div class="resume-spacer"></div>';
+    else
+      html += `<p class="resume-line">${inlineBold(esc(line))}</p>`;
+  }
+  return html;
+}
+
+/* ── Keyword highlighter ─────────────────────────────────────────── */
+function highlightKeywords(container, keywords) {
+  if (!keywords || !keywords.length) return;
+  const escaped = keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+  const pattern = new RegExp('(' + escaped.join('|') + ')', 'gi');
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  let node;
+  while ((node = walker.nextNode())) nodes.push(node);
+  for (const n of nodes) {
+    if (!pattern.test(n.textContent)) { pattern.lastIndex = 0; continue; }
+    pattern.lastIndex = 0;
+    const span = document.createElement('span');
+    span.innerHTML = n.textContent.replace(pattern, '<mark class="kw-highlight">$1</mark>');
+    pattern.lastIndex = 0;
+    n.parentNode.replaceChild(span, n);
+  }
+}
+
+/* ── ATS count-up animation ─────────────────────────────────────── */
+function startCountUp() {
+  document.querySelectorAll('.ats-ring-number[data-target]').forEach(el => {
+    const target = parseInt(el.dataset.target, 10) || 0;
+    const dur = 900;
+    const start = performance.now();
+    function tick(now) {
+      const p = Math.min((now - start) / dur, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(eased * target);
+      if (p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  });
+}
+
+/* ── Load resume text ────────────────────────────────────────────── */
+{% if job.resume_path %}
   fetch('/resume-text/{{ job.id }}')
-    .then(r => r.text())
-    .then(text => {
+    .then(r => r.json())
+    .then(data => {
       document.getElementById('resume-skeleton').style.display = 'none';
-      const el = document.getElementById('resume-text');
-      el.textContent = text;
+      const el = document.getElementById('resume-rendered');
+      el.innerHTML = renderMarkdown(data.text || '');
+      highlightKeywords(el, data.keywords || []);
       el.style.display = 'block';
     })
     .catch(() => {
       document.getElementById('resume-skeleton').style.display = 'none';
-      const el = document.getElementById('resume-unavailable');
-      if (el) { el.textContent = 'Could not load resume.'; el.style.display = 'block'; }
+      document.getElementById('resume-error').style.display = 'block';
     });
-  {% else %}
-  // Poll until tailored resume is ready (generated on-demand in backend)
-  let attempts = 0;
-  const maxAttempts = 30;
-  const pollResume = setInterval(() => {
-    attempts++;
+{% else %}
+  let _attempts = 0;
+  const _poll = setInterval(() => {
+    _attempts++;
     fetch('/resume-text/{{ job.id }}')
-      .then(r => r.ok ? r.text() : Promise.reject())
-      .then(text => {
-        if (text && text.trim() && text !== 'No resume available.') {
-          clearInterval(pollResume);
+      .then(r => r.json())
+      .then(data => {
+        if (data.text && data.text.trim()) {
+          clearInterval(_poll);
           document.getElementById('resume-skeleton').style.display = 'none';
-          const el = document.getElementById('resume-text');
-          if (el) { el.textContent = text; el.style.display = 'block'; }
+          const el = document.getElementById('resume-rendered');
+          el.innerHTML = renderMarkdown(data.text);
+          highlightKeywords(el, data.keywords || []);
+          el.style.display = 'block';
         }
-        if (attempts >= maxAttempts) clearInterval(pollResume);
+        if (_attempts >= 30) clearInterval(_poll);
       })
-      .catch(() => { if (attempts >= maxAttempts) clearInterval(pollResume); });
+      .catch(() => { if (_attempts >= 30) clearInterval(_poll); });
   }, 3000);
-  {% endif %}
+{% endif %}
+
+document.addEventListener('DOMContentLoaded', startCountUp);
 </script>
 </body>
 </html>
