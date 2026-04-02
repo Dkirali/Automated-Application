@@ -239,6 +239,32 @@
     {% endfor %}
   </div>
 
+  <!-- Campaign History -->
+  {% if campaigns %}
+    <details class="campaign-history">
+      <summary class="campaign-history-summary">Campaign History <span class="section-badge">{{ campaigns | length }}</span></summary>
+      <div class="campaign-history-list">
+        {% for c in campaigns %}
+          <div class="campaign-row">
+            <div class="campaign-row-body">
+              <div class="campaign-row-name">{{ c.titles }}</div>
+              <div class="campaign-row-meta">
+                {% if c.started_at %}{{ c.started_at[:10] }}{% endif %}
+                {% if c.locations and c.locations != 'None' %} · {{ c.locations }}{% endif %}
+              </div>
+            </div>
+            <div class="campaign-row-stats">
+              <span class="campaign-stat campaign-stat--applied">✓ {{ c.applied_count or 0 }}</span>
+              <span class="campaign-stat campaign-stat--pending">⏳ {{ c.pending_count or 0 }}</span>
+              <span class="campaign-stat campaign-stat--discarded">✗ {{ c.discarded_count or 0 }}</span>
+              <span class="campaign-badge campaign-badge--{{ c.status }}">{{ c.status }}</span>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </details>
+  {% endif %}
+
   <!-- Manual Queue -->
   {% if manual_queue %}
     <div class="section-title" style="margin-top:28px;">Manual Queue</div>
