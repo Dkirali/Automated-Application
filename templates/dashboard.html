@@ -9,8 +9,8 @@
 <body>
 <div class="container">
 
-  <!-- Top Bar -->
-  <div class="topbar">
+  <!-- Hero Top Bar -->
+  <div class="topbar topbar--hero">
     <div class="topbar-brand">
       <h1>JobBot</h1>
       <span class="status-dot {% if stats.status == 'running' %}running{% endif %}" id="status-indicator" title="{{ stats.status }}"></span>
@@ -50,14 +50,14 @@
     <div class="stat-card">
       <div class="stat-icon applied">✓</div>
       <div class="stat-body">
-        <div class="stat-number">{{ stats.applied }}</div>
+        <div class="stat-number" data-target="{{ stats.applied }}">0</div>
         <div class="stat-label">Applied</div>
       </div>
     </div>
     <div class="stat-card">
       <div class="stat-icon manual">⚠</div>
       <div class="stat-body">
-        <div class="stat-number">{{ stats.manual }}</div>
+        <div class="stat-number" data-target="{{ stats.manual }}">0</div>
         <div class="stat-label">Manual Queue</div>
       </div>
     </div>
@@ -154,22 +154,42 @@
     </div>
     <div class="card-list pending-list">
       {% for job in pending_jobs %}
+        {% set orig  = job.original_ats_score or 0 %}
+        {% set tail  = job.ats_score or 0 %}
+        {% set tail_class = 'high' if tail >= 70 else ('medium' if tail >= 40 else 'low') %}
         <a class="app-card app-card--pending" href="/review/{{ job.id }}">
           <div class="app-card-body">
             <div class="app-card-title">{{ job.title }}</div>
             <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
             {% if job.fit_summary %}
-              <div class="app-card-verdict">{{ job.fit_summary | truncate(100) }}</div>
+              <div class="app-card-verdict">{{ job.fit_summary | truncate(90) }}</div>
             {% endif %}
           </div>
           <div class="app-card-right">
-            {% if job.ats_score %}
-              {% set score = job.ats_score %}
-              {% set score_class = 'high' if score >= 70 else ('medium' if score >= 40 else 'low') %}
+            {% if tail %}
+              <div class="ats-dual-mini">
+                <div class="ats-dual-row">
+                  <span class="ats-dual-label">Before</span>
+                  <div class="ats-bar-wrap ats-bar-wrap--sm">
+                    {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
+                    <div class="ats-bar-fill {{ orig_class }}" style="width:{{ orig }}%"></div>
+                  </div>
+                  <span class="ats-dual-pct">{{ orig }}%</span>
+                </div>
+                <div class="ats-dual-row">
+                  <span class="ats-dual-label">After</span>
+                  <div class="ats-bar-wrap ats-bar-wrap--sm">
+                    <div class="ats-bar-fill {{ tail_class }}" style="width:{{ tail }}%"></div>
+                  </div>
+                  <span class="ats-dual-pct ats-dual-pct--{{ tail_class }}">{{ tail }}%</span>
+                </div>
+              </div>
+            {% elif orig %}
               <div class="ats-mini">
-                <span class="ats-mini-label">ATS {{ score }}%</span>
+                <span class="ats-mini-label">ATS {{ orig }}%</span>
                 <div class="ats-bar-wrap">
-                  <div class="ats-bar-fill {{ score_class }}" style="width:{{ score }}%"></div>
+                  {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
+                  <div class="ats-bar-fill {{ orig_class }}" style="width:{{ orig }}%"></div>
                 </div>
               </div>
             {% endif %}
@@ -208,10 +228,13 @@
         </div>
       </a>
     {% else %}
-      <div class="empty-state">
-        <div class="empty-state-icon">📋</div>
+      <div class="empty-state empty-state--illustrated">
+        <div class="empty-state-art">
+          <div class="empty-state-bot">🤖</div>
+          <div class="empty-state-sparkles">✨</div>
+        </div>
         <div class="empty-state-text">No applications yet</div>
-        <div class="empty-state-hint">Start a campaign above to begin applying</div>
+        <div class="empty-state-hint">Fill in your job titles above and hit Start — JobBot will find and queue applications for you to review.</div>
       </div>
     {% endfor %}
   </div>
@@ -235,10 +258,9 @@
 </div>
 
 <script>
-  const activityBar   = document.getElementById('activity-bar');
-  const statusText    = document.getElementById('status-text');
-  const statusDot     = document.getElementById('status-indicator');
-  const statStatus    = document.getElementById('stat-status');
+  const activityBar = document.getElementById('activity-bar');
+  const statusText  = document.getElementById('status-text');
+  const statusDot   = document.getElementById('status-indicator');
 
   function applyRunningState(isRunning) {
     if (isRunning) {
@@ -283,17 +305,23 @@
       .catch(() => {});
   }
 
-  // Show file name when resume is picked
-  const fileInput = document.querySelector('input[type="file"]');
-  if (fileInput) {
-    fileInput.addEventListener('change', e => {
-      const name = e.target.files[0]?.name;
-      if (name) {
-        const hint = fileInput.closest('.file-drop')?.querySelector('.file-drop-text');
-        if (hint) hint.textContent = '📄 ' + name;
+  /* Animated stat counters */
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.stat-number[data-target]').forEach(el => {
+      const target = parseInt(el.dataset.target, 10);
+      if (isNaN(target) || target === 0) { el.textContent = 0; return; }
+      const dur = 700;
+      let start = null;
+      function tick(ts) {
+        if (!start) start = ts;
+        const p = Math.min((ts - start) / dur, 1);
+        const eased = 1 - Math.pow(1 - p, 2);
+        el.textContent = Math.round(eased * target);
+        if (p < 1) requestAnimationFrame(tick);
       }
+      requestAnimationFrame(tick);
     });
-  }
+  });
 
   setInterval(pollStatus, 2000);
   pollStatus();
