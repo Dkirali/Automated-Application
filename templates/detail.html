@@ -80,11 +80,11 @@
         </div>
         <script>
           fetch('/resume-text/{{ application.id }}')
-            .then(r => r.text())
-            .then(text => {
+            .then(r => r.json())
+            .then(data => {
               const el = document.getElementById('resume-content');
               el.innerHTML = '';
-              el.textContent = text || 'No resume text available.';
+              el.textContent = data.text || 'No resume text available.';
             })
             .catch(() => {
               document.getElementById('resume-skeleton').innerHTML =

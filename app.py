@@ -318,24 +318,24 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
 @app.route("/review/<int:app_id>")
 def review_job(app_id):
     """Show a job pending review — generates fit summary and tailored resume on demand."""
-    from db.database import get_application
     job = get_application(app_id)
     if not job or job["status"] != "pending":
         return redirect(url_for("dashboard"))
 
     master_path = get_config("master_resume_path")
     fit = None
-    tailor = None
 
-    # Generate fit summary if not yet done
+    # Generate fit summary + JD summary if not yet done
     if not job.get("fit_summary") and job.get("job_description") and master_path:
         try:
             fit = generate_fit_summary(job["job_description"], master_path)
             update_application(app_id, "pending",
-                               fit_summary=fit["verdict"])
+                               fit_summary=fit["verdict"],
+                               jd_summary=fit.get("jd_summary"))
             job = get_application(app_id)  # refresh
         except Exception as e:
-            fit = {"fit_score": 0, "strengths": [], "gaps": [], "verdict": f"Analysis error: {e}"}
+            fit = {"fit_score": 0, "strengths": [], "gaps": [],
+                   "verdict": f"Analysis error: {e}", "jd_summary": None, "jd_keywords": None}
 
     # Tailor resume if not yet done
     if not job.get("resume_path") and job.get("job_description") and master_path:
@@ -343,14 +343,23 @@ def review_job(app_id):
             tailor = tailor_resume(app_id, job["job_description"], master_path)
             update_application(app_id, "pending",
                                ats_score=tailor["ats_score"],
+                               original_ats_score=tailor["original_ats_score"],
+                               keywords=tailor["keywords_str"],
                                resume_path=tailor["docx_path"])
             job = get_application(app_id)  # refresh
-        except Exception as e:
-            tailor = None
+        except Exception:
+            pass
 
-    # Parse stored fit summary for display
-    if job.get("fit_summary") and fit is None:
-        fit = {"verdict": job["fit_summary"], "strengths": [], "gaps": [], "fit_score": job.get("ats_score", 0)}
+    # Reconstruct fit dict from DB when returning to a cached review
+    if fit is None:
+        fit = {
+            "fit_score": job.get("ats_score", 0),
+            "strengths": [],
+            "gaps": [],
+            "verdict": job.get("fit_summary", ""),
+            "jd_summary": job.get("jd_summary"),
+            "jd_keywords": job.get("keywords"),
+        }
 
     return render_template("review.html", job=job, fit=fit)
 
@@ -404,12 +413,14 @@ def download_resume(app_id):
 
 @app.route("/resume-text/<int:app_id>")
 def resume_text(app_id):
-    from db.database import get_application
     from engine.resume import read_docx_text
     app_row = get_application(app_id)
     if not app_row or not app_row.get("resume_path"):
-        return "No resume available."
-    return read_docx_text(Path(app_row["resume_path"]))
+        return jsonify({"text": "", "keywords": []})
+    text = read_docx_text(Path(app_row["resume_path"]))
+    kw_raw = app_row.get("keywords") or ""
+    keywords = [k.strip() for k in kw_raw.split(",") if k.strip()]
+    return jsonify({"text": text, "keywords": keywords})
 
 
 if __name__ == "__main__":
