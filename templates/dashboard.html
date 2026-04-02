@@ -141,9 +141,11 @@
       </div>
     </form>
 
-    <form method="POST" action="/campaign/stop" style="margin-top:10px;">
-      <button type="submit" class="btn-stop">■ Stop</button>
-    </form>
+    <div class="campaign-bottom-row">
+      <form method="POST" action="/campaign/stop" class="stop-form">
+        <button type="submit" class="btn-stop">■ Stop Campaign</button>
+      </form>
+    </div>
   </div>
 
   <!-- Pending Review -->
@@ -267,10 +269,10 @@
 
   <!-- Manual Queue -->
   {% if manual_queue %}
-    <div class="section-title" style="margin-top:28px;">Manual Queue</div>
+    <div class="section-title manual-queue-title">Manual Queue</div>
     <div class="card-list">
       {% for job in manual_queue %}
-        <div class="app-card" style="cursor:default;">
+        <div class="app-card app-card--static">
           <div class="app-card-body">
             <div class="app-card-title">{{ job.title }}</div>
             <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>

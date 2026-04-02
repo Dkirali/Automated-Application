@@ -10,9 +10,9 @@
 <div class="page-center">
   <div class="form-card">
 
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-      <span class="form-card-logo" style="margin-bottom:0;">JobBot</span>
-      <a href="/" class="back-link" style="margin-bottom:0;">← Dashboard</a>
+    <div class="form-card-toprow">
+      <span class="form-card-logo">JobBot</span>
+      <a href="/" class="back-link">← Dashboard</a>
     </div>
 
     <h2>Settings</h2>
@@ -39,15 +39,15 @@
         <input type="tel" id="phone" name="phone" value="{{ phone }}" required>
       </div>
       <div class="form-group">
-        <label for="groq_key">Groq API Key <span style="font-weight:400;color:var(--clr-text-muted);font-size:12px;">(free — leave blank to keep current)</span></label>
+        <label for="groq_key">Groq API Key <span class="label-hint">(free — leave blank to keep current)</span></label>
         <input type="password" id="groq_key" name="groq_key" placeholder="gsk_…">
       </div>
       <div class="form-group">
-        <label for="gemini_key">Gemini API Key <span style="font-weight:400;color:var(--clr-text-muted);font-size:12px;">(free — leave blank to keep current)</span></label>
+        <label for="gemini_key">Gemini API Key <span class="label-hint">(free — leave blank to keep current)</span></label>
         <input type="password" id="gemini_key" name="gemini_key" placeholder="AIza…">
       </div>
       <div class="form-group">
-        <label for="api_key">Claude API Key <span style="font-weight:400;color:var(--clr-text-muted);font-size:12px;">(leave blank to keep current)</span></label>
+        <label for="api_key">Claude API Key <span class="label-hint">(leave blank to keep current)</span></label>
         <input type="password" id="api_key" name="api_key" placeholder="sk-ant-…">
       </div>
 
@@ -64,7 +64,7 @@
         </div>
       </div>
 
-      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;padding:12px;">
+      <button type="submit" class="btn btn-primary btn-full">
         Save Changes
       </button>
     </form>

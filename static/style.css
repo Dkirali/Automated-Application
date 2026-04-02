@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400&display=swap');
+
 /* ─── Design Tokens — Dark Synthwave ─────────────────────────────────────── */
 :root {
   /* Neon palette */
@@ -49,7 +51,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--clr-bg);
   color: var(--clr-text);
   font-size: 14px;
@@ -79,6 +81,13 @@ body::after {
 
 a { color: var(--clr-primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
+
+/* ─── Custom Scrollbar ───────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--clr-bg); }
+::-webkit-scrollbar-thumb { background: var(--clr-border); border-radius: var(--radius-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--clr-primary-dark); }
+* { scrollbar-width: thin; scrollbar-color: var(--clr-border) var(--clr-bg); }
 
 /* ─── Layout ─────────────────────────────────────────────────────────────── */
 .container {
@@ -227,7 +236,7 @@ a:hover { text-decoration: underline; }
   border: 1px solid rgba(191,148,255,.3);
   border-radius: var(--radius-md);
   padding: 10px 14px;
-  margin-bottom: 16px;
+  margin-bottom: 28px;
   font-size: 13px;
   color: var(--clr-primary-light);
   box-shadow: var(--glow-primary);
@@ -272,9 +281,9 @@ a:hover { text-decoration: underline; }
   font-size: 18px;
   flex-shrink: 0;
 }
-.stat-icon.applied  { background: var(--clr-success-tint); }
-.stat-icon.manual   { background: var(--clr-warning-tint); }
-.stat-icon.status   { background: var(--clr-primary-tint); }
+.stat-icon.applied  { background: var(--clr-success-tint); color: var(--clr-success); }
+.stat-icon.manual   { background: var(--clr-warning-tint); color: var(--clr-warning); }
+.stat-icon.status   { background: var(--clr-primary-tint); color: var(--clr-primary); }
 .stat-body {}
 .stat-number {
   font-size: 26px;
@@ -428,6 +437,16 @@ a:hover { text-decoration: underline; }
   font-size: 12px;
   color: var(--clr-text-subtle);
 }
+.campaign-card .stop-form { margin-top: 10px; }
+.campaign-bottom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--clr-border);
+}
 
 /* ─── Buttons ────────────────────────────────────────────────────────────── */
 .btn {
@@ -487,6 +506,11 @@ a:hover { text-decoration: underline; }
   padding: 5px 12px;
   font-size: 12px;
 }
+.btn-full {
+  width: 100%;
+  justify-content: center;
+  padding: 12px;
+}
 
 /* ─── Section Title ──────────────────────────────────────────────────────── */
 .section-title {
@@ -495,7 +519,8 @@ a:hover { text-decoration: underline; }
   color: var(--clr-text-muted);
   text-transform: uppercase;
   letter-spacing: .6px;
-  margin-bottom: 10px;
+  margin-top: 28px;
+  margin-bottom: 12px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -532,6 +557,8 @@ a:hover { text-decoration: underline; }
   text-decoration: none;
   background: var(--clr-surface2);
 }
+.app-card--static { cursor: default; }
+.app-card--static:hover { transform: none; border-color: var(--clr-border); box-shadow: var(--shadow-sm); background: var(--clr-surface); }
 @keyframes fadeSlide {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -650,6 +677,10 @@ a:hover { text-decoration: underline; }
   font-weight: 800;
   color: var(--clr-text);
 }
+.ats-ring-value--empty {
+  font-size: 11px;
+  color: var(--clr-text-subtle);
+}
 
 .detail-grid {
   display: grid;
@@ -732,6 +763,12 @@ a:hover { text-decoration: underline; }
   max-width: 480px;
   box-shadow: var(--shadow-lg);
 }
+.form-card-toprow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
 .form-card-logo {
   font-size: 28px;
   font-weight: 800;
@@ -739,8 +776,8 @@ a:hover { text-decoration: underline; }
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  margin-bottom: 4px;
   display: block;
+  margin-bottom: 4px;
 }
 .form-card h2 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
 .form-card .form-card-sub { font-size: 13px; color: var(--clr-text-muted); margin-bottom: 24px; }
@@ -761,6 +798,8 @@ a:hover { text-decoration: underline; }
   outline: none;
   transition: border-color var(--transition), box-shadow var(--transition);
   color: var(--clr-text);
+  background: var(--clr-surface2);
+  font-family: inherit;
 }
 .setup-form .form-group input:focus {
   border-color: var(--clr-primary);
@@ -802,6 +841,15 @@ a:hover { text-decoration: underline; }
   border-radius: var(--radius-full);
   margin-bottom: 8px;
 }
+
+/* ─── Utility classes ────────────────────────────────────────────────────── */
+.label-hint {
+  font-weight: 400;
+  color: var(--clr-text-muted);
+  font-size: 12px;
+}
+.form-inline { display: inline; }
+.detail-panel-body--muted { color: var(--clr-text-muted); }
 
 /* ─── Steps indicator (setup) ─────────────────────────────────────────────── */
 .steps {
@@ -922,7 +970,7 @@ a:hover { text-decoration: underline; }
 /* Dual ATS comparison layout */
 .ats-comparison {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   flex-shrink: 0;
 }
@@ -931,6 +979,7 @@ a:hover { text-decoration: underline; }
   flex-direction: column;
   align-items: center;
   gap: 2px;
+  margin-top: 22px;  /* center delta arrow against the 72px ring circle (ring center = 36px, delta height ~28px) */
 }
 .ats-delta-arrow {
   font-size: 16px;
@@ -946,22 +995,39 @@ a:hover { text-decoration: underline; }
 .ats-delta-value.positive { color: var(--clr-success); }
 .ats-delta-value.negative { color: var(--clr-danger); }
 
-/* ATS Ring */
-.ats-ring-wrap {
+/* ATS Ring — review page (scoped to .ats-comparison to avoid affecting detail page) */
+/* Note: stroke-dashoffset="31.415" (= circumference/4) already positions arcs at 12 o'clock.
+   No additional CSS rotation is needed or correct for the review page SVG rings. */
+
+.ats-comparison .ats-ring-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 72px;
+  height: 96px;      /* 72px ring + 24px for unit caption below */
+  gap: 0;
+}
+.ats-comparison svg.ats-ring {
+  width: 72px;
+  height: 72px;
+  display: block;
+  flex-shrink: 0;
+}
+/* Number overlay — centered inside the 72px ring */
+.ats-comparison .ats-ring-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 72px;
+  height: 72px;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  width: 72px;
-  height: 72px;
-}
-.ats-ring-label {
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
+  flex-direction: column;
   text-align: center;
-  line-height: 1.15;
+  gap: 1px;
   pointer-events: none;
 }
 .ats-ring-number {
@@ -969,10 +1035,18 @@ a:hover { text-decoration: underline; }
   font-size: 18px;
   font-weight: 900;
   color: var(--clr-text);
+  line-height: 1;
 }
-.ats-ring-unit {
-  display: block;
-  font-size: 9px;
+/* Unit caption — sits BELOW the ring stroke.
+   Ring stroke bottom edge = center_y(36) + radius(30) + stroke_half(3) = 69px from SVG top.
+   To clear: top ≥ 73px from wrapper (= 73px from label top since label top=0). */
+.ats-comparison .ats-ring-unit {
+  position: absolute;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 10px;
   font-weight: 700;
   color: var(--clr-text-muted);
   text-transform: uppercase;
@@ -1201,59 +1275,6 @@ mark.kw-highlight {
   -webkit-print-color-adjust: exact;
 }
 
-/* Review header card */
-.review-header {
-  background: var(--clr-surface);
-  border: 1px solid var(--clr-border);
-  border-radius: var(--radius-lg);
-  padding: 24px;
-  margin: 16px 0;
-  box-shadow: var(--shadow-sm);
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-}
-
-/* Fit bar */
-.fit-bar {
-  background: var(--clr-surface);
-  border: 1px solid var(--clr-border);
-  border-radius: var(--radius-md);
-  padding: 16px 20px;
-  margin-bottom: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  box-shadow: var(--shadow-sm);
-}
-
-/* Review panels */
-.review-panel {
-  background: var(--clr-surface);
-  border: 1px solid var(--clr-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  display: flex;
-  flex-direction: column;
-  min-height: 420px;
-  max-height: 640px;
-  overflow: hidden;
-}
-.review-panel-header {
-  background: var(--clr-surface2);
-  border-bottom: 1px solid var(--clr-border);
-}
-
-/* JD summary card */
-.jd-summary-card {
-  background: var(--clr-primary-tint);
-  border: 1px solid rgba(191,148,255,.2);
-  border-radius: var(--radius-md);
-  padding: 14px 16px;
-  margin-bottom: 14px;
-}
-
 /* Review Action Buttons */
 .review-actions {
   display: flex;
@@ -1371,7 +1392,7 @@ mark.kw-highlight {
   text-transform: uppercase;
   letter-spacing: .4px;
   color: var(--clr-text-subtle);
-  width: 28px;
+  width: 36px;      /* was 28px — too narrow for "BEFORE" (6 chars) */
   flex-shrink: 0;
 }
 .ats-bar-wrap--sm { width: 52px; }
@@ -1457,6 +1478,9 @@ mark.kw-highlight {
 .campaign-badge--stopped { background: var(--clr-surface2); color: var(--clr-text-muted); }
 .campaign-badge--idle    { background: var(--clr-warning-tint); color: var(--clr-warning-text); }
 
+/* ─── Manual queue spacing ───────────────────────────────────────────────── */
+.manual-queue-title { margin-top: 28px; }
+
 /* ─── Illustrated empty state ────────────────────────────────────────────── */
 .empty-state--illustrated { padding: 48px 20px 56px; }
 .empty-state-art {
@@ -1492,6 +1516,17 @@ mark.kw-highlight {
 }
 
 /* ─── Responsive ─────────────────────────────────────────────────────────── */
+
+/* Tablet: 768px */
+@media (max-width: 768px) {
+  .review-grid { grid-template-columns: 1fr; }
+  .review-panel { max-height: 480px; }
+  .filter-row { grid-template-columns: 1fr 1fr; gap: 14px; }
+  .filter-row .filter-group:last-child { grid-column: span 2; }
+  .campaign-bottom-row { flex-direction: row; }
+}
+
+/* Mobile: 680px */
 @media (max-width: 680px) {
   .container { padding: 16px 14px 48px; }
   .topbar--hero { margin: -16px -14px 16px; padding: 14px 18px; border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
@@ -1499,19 +1534,22 @@ mark.kw-highlight {
   .stats-row .stat-card:last-child { grid-column: span 2; }
   .form-row { grid-template-columns: 1fr; }
   .filter-row { grid-template-columns: 1fr; gap: 14px; }
+  .filter-row .filter-group:last-child { grid-column: span 1; }
   .detail-grid { grid-template-columns: 1fr; }
   .detail-header { flex-direction: column; }
   .form-card { padding: 24px 20px; }
   .topbar-brand h1 { font-size: 18px; }
-  .review-grid { grid-template-columns: 1fr; }
   .review-header { flex-direction: column; align-items: flex-start; }
   .ats-comparison { align-self: flex-start; }
   .review-actions { flex-wrap: wrap; }
   .btn-back-dash { margin-left: 0; }
+  .campaign-bottom-row { flex-direction: column; align-items: flex-start; }
 }
 
+/* Small mobile: 420px */
 @media (max-width: 420px) {
   .stats-row { grid-template-columns: 1fr; }
   .stats-row .stat-card:last-child { grid-column: span 1; }
   .campaign-actions { flex-wrap: wrap; }
+  .ats-comparison { flex-wrap: wrap; gap: 6px; }
 }

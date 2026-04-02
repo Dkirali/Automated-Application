@@ -188,7 +188,7 @@
           {% if job.resume_path %}
             <a href="/download/{{ job.id }}" class="panel-action-btn">↓ Download</a>
           {% endif %}
-          <form method="POST" action="/retailor/{{ job.id }}" style="display:inline">
+          <form method="POST" action="/retailor/{{ job.id }}" class="form-inline">
             <button type="submit" class="panel-action-btn panel-action-btn--secondary" title="Re-generate tailored resume">↺ Re-tailor</button>
           </form>
         </div>
