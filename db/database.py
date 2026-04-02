@@ -123,6 +123,23 @@ def get_active_campaign() -> dict | None:
         ).fetchone()
         return dict(row) if row else None
 
+def get_all_campaigns() -> list[dict]:
+    """Return all campaigns with application counts, newest first."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT c.*,
+                   COUNT(a.id)                                          AS total_count,
+                   SUM(CASE WHEN a.status='applied'   THEN 1 ELSE 0 END) AS applied_count,
+                   SUM(CASE WHEN a.status='pending'   THEN 1 ELSE 0 END) AS pending_count,
+                   SUM(CASE WHEN a.status='discarded' THEN 1 ELSE 0 END) AS discarded_count
+            FROM campaigns c
+            LEFT JOIN applications a ON a.campaign_id = c.id
+            GROUP BY c.id
+            ORDER BY c.started_at DESC
+            LIMIT 20
+        """).fetchall()
+        return [dict(r) for r in rows]
+
 def insert_application(campaign_id, company, title, location, url,
                        job_description, easy_apply=True) -> int | None:
     with get_conn() as conn:
