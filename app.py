@@ -396,6 +396,19 @@ def discard_job(app_id):
     return redirect(url_for("dashboard"))
 
 
+@app.route("/retailor/<int:app_id>", methods=["POST"])
+def retailor_job(app_id):
+    """Clear cached resume/ATS data so review page re-runs tailoring fresh."""
+    from db.database import get_conn
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE applications SET resume_path=NULL, ats_score=NULL, "
+            "original_ats_score=NULL, keywords=NULL WHERE id=?",
+            (app_id,)
+        )
+    return redirect(url_for("review_job", app_id=app_id))
+
+
 @app.route("/download/<int:app_id>")
 def download_resume(app_id):
     from flask import send_file
