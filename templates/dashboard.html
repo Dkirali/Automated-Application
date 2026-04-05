@@ -176,7 +176,7 @@
                     {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
                     <div class="ats-bar-fill {{ orig_class }}" style="width:{{ orig }}%"></div>
                   </div>
-                  <span class="ats-dual-pct">{{ orig }}%</span>
+                  <span class="ats-dual-pct ats-dual-pct--{{ orig_class }}">{{ orig }}%</span>
                 </div>
                 <div class="ats-dual-row">
                   <span class="ats-dual-label">After</span>
