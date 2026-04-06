@@ -164,7 +164,9 @@
             <div class="app-card-title">{{ job.title }}</div>
             <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
             {% if job.status == 'pending' %}
-              <div class="app-card-verdict" style="color:var(--clr-warning);font-size:11px;">⏳ Tailoring resume…</div>
+              <div class="app-card-verdict" style="color:var(--clr-warning);font-size:11px;">⏳ Pending — tailoring queued</div>
+            {% elif job.status == 'reviewed' and not job.ats_score %}
+              <div class="app-card-verdict" style="color:var(--clr-success);font-size:11px;">✓ Ready for review</div>
             {% endif %}
           </div>
           <div class="app-card-right">

@@ -250,6 +250,15 @@ def linkedin_connect():
     return jsonify(ok=True)
 
 
+@app.route("/api/job-status/<int:app_id>")
+def job_status_api(app_id):
+    """Return current status of a job — used by review page to detect when tailoring finishes."""
+    job = get_application(app_id)
+    if not job:
+        return jsonify(status="unknown"), 404
+    return jsonify(status=job["status"])
+
+
 @app.route("/application/<int:app_id>")
 def application_detail(app_id):
     from db.database import get_application
