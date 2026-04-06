@@ -259,10 +259,50 @@ def application_detail(app_id):
     return render_template("detail.html", application=app_row)
 
 
+def process_job(campaign_id: int, job: dict, stop_event) -> None:
+    """
+    Insert a single scraped job as 'pending', then immediately tailor the resume
+    in the same background thread.
+
+    Status flow:
+      pending  →  reviewed  (tailor succeeded)
+      pending  →  failed    (tailor raised)
+
+    If no master_resume_path is configured, the job is left as 'pending' so the
+    user can still review it manually.
+    """
+    company = job.get("company", "Unknown")
+    title   = job.get("title", "Unknown")
+
+    app_id = insert_application(
+        campaign_id, company, title,
+        job.get("location", ""), job["url"],
+        job.get("job_description", ""), easy_apply=True,
+    )
+    if not app_id:
+        return  # duplicate URL — skip
+
+    master_path = get_config("master_resume_path")
+    if not master_path or not job.get("job_description"):
+        # Nothing to tailor — leave as pending for manual review
+        return
+
+    try:
+        tailor = tailor_resume(app_id, job["job_description"], master_path)
+        update_application(
+            app_id, "reviewed",
+            ats_score=tailor["ats_score"],
+            original_ats_score=tailor.get("original_ats_score"),
+            keywords=tailor.get("keywords_str"),
+            resume_path=tailor["docx_path"],
+        )
+    except Exception:
+        update_application(app_id, "failed")
+
+
 def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
     """
-    Background thread: scrape LinkedIn and store jobs as 'pending'.
-    No tailoring or submission happens here — user reviews first.
+    Background thread: scrape LinkedIn, insert jobs, and tailor resumes per-job.
     """
     global _alert, _status
     from engine.scraper import scrape_jobs
@@ -292,23 +332,23 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
         for job in jobs:
             if stop_event.is_set():
                 break
-            company = job.get("company", "Unknown")
-            title   = job.get("title", "Unknown")
             if not job.get("easy_apply"):
-                insert_manual(campaign_id, company, title,
-                              job.get("location", ""), job["url"], "not_easy_apply")
+                insert_manual(
+                    campaign_id,
+                    job.get("company", "Unknown"),
+                    job.get("title", "Unknown"),
+                    job.get("location", ""),
+                    job["url"],
+                    "not_easy_apply",
+                )
                 continue
-            app_id = insert_application(
-                campaign_id, company, title,
-                job.get("location", ""), job["url"],
-                job.get("job_description", ""), easy_apply=True
-            )
-            if app_id:
-                added += 1
+            update(f"Tailoring resume for: {job.get('title', 'Unknown')} at {job.get('company', 'Unknown')}…")
+            process_job(campaign_id, job, stop_event)
+            added += 1
 
         if added:
-            update(f"Added {added} job(s) to Pending — review them in the dashboard")
-            _alert = f"{added} new job(s) pending your review."
+            update(f"Processed {added} job(s) — check Pending in the dashboard")
+            _alert = f"{added} new job(s) processed."
         stop_event.wait(timeout=300)  # wait before next scrape pass
 
     _status = "Idle"
@@ -319,53 +359,22 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
 
 @app.route("/review/<int:app_id>")
 def review_job(app_id):
-    """Show a job pending review — generates fit summary and tailored resume on demand."""
+    """Show a job pending review — read-only, tailoring has already run at insert time."""
     job = get_application(app_id)
-    if not job or job["status"] != "pending":
+    if not job or job["status"] not in ("pending", "reviewed"):
         return redirect(url_for("dashboard"))
 
-    master_path = get_config("master_resume_path")
-    fit = None
-
-    # Generate fit summary + JD summary if not yet done
-    if not job.get("fit_summary") and job.get("job_description") and master_path:
-        try:
-            fit = generate_fit_summary(job["job_description"], master_path)
-            # Store the raw LLM output in fit_summary so strengths/gaps can be re-parsed on revisit
-            update_application(app_id, "pending",
-                               fit_summary=fit["raw"],
-                               jd_summary=fit.get("jd_summary"))
-            job = get_application(app_id)  # refresh
-        except Exception as e:
-            fit = {"fit_score": 0, "strengths": [], "gaps": [],
-                   "verdict": f"Analysis error: {e}", "jd_summary": None, "jd_keywords": None}
-
-    # Tailor resume if not yet done
-    if not job.get("resume_path") and job.get("job_description") and master_path:
-        try:
-            tailor = tailor_resume(app_id, job["job_description"], master_path)
-            update_application(app_id, "pending",
-                               ats_score=tailor["ats_score"],
-                               original_ats_score=tailor["original_ats_score"],
-                               keywords=tailor["keywords_str"],
-                               resume_path=tailor["docx_path"])
-            job = get_application(app_id)  # refresh
-        except Exception:
-            pass
-
-    # Reconstruct fit dict from DB when returning to a cached review
-    # fit_summary stores the raw LLM response; re-parse it to recover strengths/gaps
-    if fit is None:
-        from engine.resume import parse_fit_score, parse_fit_field
-        raw = job.get("fit_summary", "")
-        fit = {
-            "fit_score":  parse_fit_score(raw),
-            "strengths":  [s.strip() for s in parse_fit_field(raw, "STRENGTHS").split(",") if s.strip()],
-            "gaps":       [g.strip() for g in parse_fit_field(raw, "GAPS").split(",") if g.strip()],
-            "verdict":    parse_fit_field(raw, "VERDICT") or raw,
-            "jd_summary": job.get("jd_summary"),
-            "jd_keywords": job.get("keywords"),
-        }
+    # Reconstruct fit dict from stored fit_summary (populated by process_job at insert time)
+    from engine.resume import parse_fit_score, parse_fit_field
+    raw = job.get("fit_summary") or ""
+    fit = {
+        "fit_score":   parse_fit_score(raw),
+        "strengths":   [s.strip() for s in parse_fit_field(raw, "STRENGTHS").split(",") if s.strip()],
+        "gaps":        [g.strip() for g in parse_fit_field(raw, "GAPS").split(",") if g.strip()],
+        "verdict":     parse_fit_field(raw, "VERDICT") or raw,
+        "jd_summary":  job.get("jd_summary"),
+        "jd_keywords": job.get("keywords"),
+    }
 
     return render_template("review.html", job=job, fit=fit)
 

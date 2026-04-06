@@ -353,6 +353,12 @@
 
   setInterval(pollStatus, 2000);
   pollStatus();
+
+  // Auto-reload the page every 5 s while a campaign is running so newly
+  // inserted/tailored jobs appear in the Pending list without a manual refresh.
+  {% if stats.status == 'running' %}
+  setTimeout(() => location.reload(), 5000);
+  {% endif %}
 </script>
 </body>
 </html>
