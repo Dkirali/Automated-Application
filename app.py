@@ -315,24 +315,12 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
 
     while not stop_event.is_set():
         update(f"Scraping LinkedIn for: {', '.join(titles)}…")
-        try:
-            jobs = scrape_jobs(titles, filters, seen_urls, stop_event,
-                               status_callback=update)
-        except Exception as e:
-            _alert = f"Scraper error: {e}"
-            _status = f"Scraper error: {e}"
-            break
 
-        if not jobs:
-            update("No new jobs found — waiting 5 minutes before re-scraping…")
-            stop_event.wait(timeout=300)
-            continue
-
-        # Phase 1: insert all easy-apply jobs as 'pending' immediately
+        # Jobs are inserted into DB immediately as the scraper finds each one
         pending_jobs_to_tailor = []
-        for job in jobs:
-            if stop_event.is_set():
-                break
+
+        def on_job_found(job):
+            """Called by scraper for each job as it's discovered."""
             if not job.get("easy_apply"):
                 insert_manual(
                     campaign_id,
@@ -342,7 +330,7 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
                     job["url"],
                     "not_easy_apply",
                 )
-                continue
+                return
             app_id = insert_application(
                 campaign_id,
                 job.get("company", "Unknown"),
@@ -356,10 +344,22 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
                 job["_app_id"] = app_id
                 pending_jobs_to_tailor.append(job)
 
-        if pending_jobs_to_tailor:
-            _alert = f"Added {len(pending_jobs_to_tailor)} job(s) to Pending — tailoring resumes now…"
+        try:
+            scrape_jobs(titles, filters, seen_urls, stop_event,
+                        status_callback=update, on_job=on_job_found)
+        except Exception as e:
+            _alert = f"Scraper error: {e}"
+            _status = f"Scraper error: {e}"
+            break
 
-        # Phase 2: tailor resumes one by one
+        if not pending_jobs_to_tailor:
+            update("No new jobs found — waiting 5 minutes before re-scraping…")
+            stop_event.wait(timeout=300)
+            continue
+
+        _alert = f"Added {len(pending_jobs_to_tailor)} job(s) — tailoring resumes now…"
+
+        # Tailor resumes + generate fit summaries one by one
         master_path = get_config("master_resume_path")
         for job in pending_jobs_to_tailor:
             if stop_event.is_set():
@@ -372,7 +372,6 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
                 continue
             try:
                 tailor = tailor_resume(app_id, job["job_description"], master_path)
-                # Also generate fit summary (strengths, gaps, verdict, JD summary)
                 fit = generate_fit_summary(job["job_description"], master_path)
                 update_application(
                     app_id, "reviewed",
@@ -387,9 +386,8 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
                 update_application(app_id, "failed")
 
         added = len(pending_jobs_to_tailor)
-        if added:
-            update(f"Added {added} job(s) to Pending — review them in the dashboard")
-            _alert = f"Added {added} job(s) to Pending – review them in the dashboard"
+        update(f"Processed {added} job(s) — review them in the dashboard")
+        _alert = f"Added {added} job(s) – review them in the dashboard"
         stop_event.wait(timeout=300)  # wait before next scrape pass
 
     _status = "Idle"

@@ -127,7 +127,7 @@ def get_job_description(page: Page) -> str:
 
 
 def scrape_jobs(titles: list[str], filters: dict, seen_urls: set, stop_event,
-                status_callback=None) -> list[dict]:
+                status_callback=None, on_job=None) -> list[dict]:
     """
     Scrape LinkedIn for jobs matching titles/filters.
     Returns list of pending job dicts. No submission happens here.
@@ -222,6 +222,10 @@ def scrape_jobs(titles: list[str], filters: dict, seen_urls: set, stop_event,
 
                 results.append(job)
                 seen_urls.add(job["url"])
+
+                # Notify caller immediately so job can be persisted to DB
+                if on_job:
+                    on_job(job)
 
                 # Short polite delay — scraping only, no submission happening
                 page.wait_for_timeout(random.randint(3000, 5000))
