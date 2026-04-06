@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import threading
@@ -16,6 +17,8 @@ from engine.resume import tailor_resume, generate_fit_summary
 from engine.submitter import submit_application
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("jobbot")
 app = Flask(__name__)
 RESUMES_DIR = Path("resumes")
 ALLOWED_RESUME_EXTENSIONS = {".docx", ".doc", ".pdf"}
@@ -250,6 +253,15 @@ def linkedin_connect():
     return jsonify(ok=True)
 
 
+@app.route("/api/job-status/<int:app_id>")
+def job_status_api(app_id):
+    """Return current status of a job — used by review page to detect when tailoring finishes."""
+    job = get_application(app_id)
+    if not job:
+        return jsonify(status="unknown"), 404
+    return jsonify(status=job["status"])
+
+
 @app.route("/application/<int:app_id>")
 def application_detail(app_id):
     from db.database import get_application
@@ -259,10 +271,51 @@ def application_detail(app_id):
     return render_template("detail.html", application=app_row)
 
 
+def process_job(campaign_id: int, job: dict, stop_event) -> None:
+    """
+    Insert a single scraped job as 'pending', then immediately tailor the resume
+    in the same background thread.
+
+    Status flow:
+      pending  →  reviewed  (tailor succeeded)
+      pending  →  failed    (tailor raised)
+
+    If no master_resume_path is configured, the job is left as 'pending' so the
+    user can still review it manually.
+    """
+    company = job.get("company", "Unknown")
+    title   = job.get("title", "Unknown")
+
+    app_id = insert_application(
+        campaign_id, company, title,
+        job.get("location", ""), job["url"],
+        job.get("job_description", ""), easy_apply=True,
+    )
+    if not app_id:
+        return  # duplicate URL — skip
+
+    master_path = get_config("master_resume_path")
+    if not master_path or not job.get("job_description"):
+        # Nothing to tailor — leave as pending for manual review
+        return
+
+    try:
+        tailor = tailor_resume(app_id, job["job_description"], master_path)
+        update_application(
+            app_id, "reviewed",
+            ats_score=tailor["ats_score"],
+            original_ats_score=tailor.get("original_ats_score"),
+            keywords=tailor.get("keywords_str"),
+            resume_path=tailor["docx_path"],
+        )
+    except Exception as e:
+        logger.error("process_job failed for app_id=%s: %s", app_id, e, exc_info=True)
+        update_application(app_id, "failed")
+
+
 def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
     """
-    Background thread: scrape LinkedIn and store jobs as 'pending'.
-    No tailoring or submission happens here — user reviews first.
+    Background thread: scrape LinkedIn, insert jobs, and tailor resumes per-job.
     """
     global _alert, _status
     from engine.scraper import scrape_jobs
@@ -275,40 +328,80 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
 
     while not stop_event.is_set():
         update(f"Scraping LinkedIn for: {', '.join(titles)}…")
+
+        # Jobs are inserted into DB and tailored immediately as the scraper
+        # finds each one.  This guarantees that even if the user stops the
+        # campaign mid-scrape, every discovered job already has its resume.
+        jobs_found = 0
+        master_path = get_config("master_resume_path")
+
+        def on_job_found(job):
+            """Called by scraper for each job as it's discovered."""
+            nonlocal jobs_found
+            if not job.get("easy_apply"):
+                insert_manual(
+                    campaign_id,
+                    job.get("company", "Unknown"),
+                    job.get("title", "Unknown"),
+                    job.get("location", ""),
+                    job["url"],
+                    "not_easy_apply",
+                )
+                return
+            app_id = insert_application(
+                campaign_id,
+                job.get("company", "Unknown"),
+                job.get("title", "Unknown"),
+                job.get("location", ""),
+                job["url"],
+                job.get("job_description", ""),
+                easy_apply=True,
+            )
+            if not app_id:
+                return  # duplicate URL
+            jobs_found += 1
+
+            # Tailor immediately — don't defer to a later loop
+            jd = job.get("job_description", "")
+            title = job.get("title", "Unknown")
+            company = job.get("company", "Unknown")
+            if not master_path or not jd:
+                return
+            update(f"Tailoring resume for: {title} at {company}…")
+            try:
+                tailor = tailor_resume(app_id, jd, master_path)
+                fit = generate_fit_summary(jd, master_path)
+                update_application(
+                    app_id, "reviewed",
+                    ats_score=tailor["ats_score"],
+                    original_ats_score=tailor.get("original_ats_score"),
+                    keywords=tailor.get("keywords_str"),
+                    resume_path=tailor["docx_path"],
+                    fit_summary=fit.get("raw", ""),
+                    jd_summary=fit.get("jd_summary", ""),
+                )
+                logger.info("Tailored app_id=%s (%s at %s)", app_id, title, company)
+            except Exception as e:
+                logger.error("Tailoring failed for app_id=%s (%s at %s): %s",
+                             app_id, title, company, e, exc_info=True)
+                update_application(app_id, "failed")
+
         try:
-            jobs = scrape_jobs(titles, filters, seen_urls, stop_event,
-                               status_callback=update)
+            scrape_jobs(titles, filters, seen_urls, stop_event,
+                        status_callback=update, on_job=on_job_found)
         except Exception as e:
+            logger.error("Scraper error: %s", e, exc_info=True)
             _alert = f"Scraper error: {e}"
             _status = f"Scraper error: {e}"
             break
 
-        if not jobs:
+        if not jobs_found:
             update("No new jobs found — waiting 5 minutes before re-scraping…")
             stop_event.wait(timeout=300)
             continue
 
-        added = 0
-        for job in jobs:
-            if stop_event.is_set():
-                break
-            company = job.get("company", "Unknown")
-            title   = job.get("title", "Unknown")
-            if not job.get("easy_apply"):
-                insert_manual(campaign_id, company, title,
-                              job.get("location", ""), job["url"], "not_easy_apply")
-                continue
-            app_id = insert_application(
-                campaign_id, company, title,
-                job.get("location", ""), job["url"],
-                job.get("job_description", ""), easy_apply=True
-            )
-            if app_id:
-                added += 1
-
-        if added:
-            update(f"Added {added} job(s) to Pending — review them in the dashboard")
-            _alert = f"{added} new job(s) pending your review."
+        update(f"Processed {jobs_found} job(s) — review them in the dashboard")
+        _alert = f"Added {jobs_found} job(s) – review them in the dashboard"
         stop_event.wait(timeout=300)  # wait before next scrape pass
 
     _status = "Idle"
@@ -319,53 +412,22 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
 
 @app.route("/review/<int:app_id>")
 def review_job(app_id):
-    """Show a job pending review — generates fit summary and tailored resume on demand."""
+    """Show a job pending review — read-only, tailoring has already run at insert time."""
     job = get_application(app_id)
-    if not job or job["status"] != "pending":
+    if not job or job["status"] not in ("pending", "reviewed"):
         return redirect(url_for("dashboard"))
 
-    master_path = get_config("master_resume_path")
-    fit = None
-
-    # Generate fit summary + JD summary if not yet done
-    if not job.get("fit_summary") and job.get("job_description") and master_path:
-        try:
-            fit = generate_fit_summary(job["job_description"], master_path)
-            # Store the raw LLM output in fit_summary so strengths/gaps can be re-parsed on revisit
-            update_application(app_id, "pending",
-                               fit_summary=fit["raw"],
-                               jd_summary=fit.get("jd_summary"))
-            job = get_application(app_id)  # refresh
-        except Exception as e:
-            fit = {"fit_score": 0, "strengths": [], "gaps": [],
-                   "verdict": f"Analysis error: {e}", "jd_summary": None, "jd_keywords": None}
-
-    # Tailor resume if not yet done
-    if not job.get("resume_path") and job.get("job_description") and master_path:
-        try:
-            tailor = tailor_resume(app_id, job["job_description"], master_path)
-            update_application(app_id, "pending",
-                               ats_score=tailor["ats_score"],
-                               original_ats_score=tailor["original_ats_score"],
-                               keywords=tailor["keywords_str"],
-                               resume_path=tailor["docx_path"])
-            job = get_application(app_id)  # refresh
-        except Exception:
-            pass
-
-    # Reconstruct fit dict from DB when returning to a cached review
-    # fit_summary stores the raw LLM response; re-parse it to recover strengths/gaps
-    if fit is None:
-        from engine.resume import parse_fit_score, parse_fit_field
-        raw = job.get("fit_summary", "")
-        fit = {
-            "fit_score":  parse_fit_score(raw),
-            "strengths":  [s.strip() for s in parse_fit_field(raw, "STRENGTHS").split(",") if s.strip()],
-            "gaps":       [g.strip() for g in parse_fit_field(raw, "GAPS").split(",") if g.strip()],
-            "verdict":    parse_fit_field(raw, "VERDICT") or raw,
-            "jd_summary": job.get("jd_summary"),
-            "jd_keywords": job.get("keywords"),
-        }
+    # Reconstruct fit dict from stored fit_summary (populated by process_job at insert time)
+    from engine.resume import parse_fit_score, parse_fit_field
+    raw = job.get("fit_summary") or ""
+    fit = {
+        "fit_score":   parse_fit_score(raw),
+        "strengths":   [s.strip() for s in parse_fit_field(raw, "STRENGTHS").split(",") if s.strip()],
+        "gaps":        [g.strip() for g in parse_fit_field(raw, "GAPS").split(",") if g.strip()],
+        "verdict":     parse_fit_field(raw, "VERDICT") or raw,
+        "jd_summary":  job.get("jd_summary"),
+        "jd_keywords": job.get("keywords"),
+    }
 
     return render_template("review.html", job=job, fit=fit)
 
@@ -390,7 +452,8 @@ def apply_job(app_id):
             phone=get_config("phone"),
         )
         mark_applied(app_id) if submitted else update_application(app_id, "failed")
-    except Exception:
+    except Exception as e:
+        logger.error("Submit failed for app_id=%s: %s", app_id, e, exc_info=True)
         update_application(app_id, "failed")
 
     return redirect(url_for("dashboard"))
@@ -404,15 +467,85 @@ def discard_job(app_id):
 
 @app.route("/retailor/<int:app_id>", methods=["POST"])
 def retailor_job(app_id):
-    """Clear cached resume/ATS data so review page re-runs tailoring fresh."""
+    """Reset job to pending and re-run tailoring in the background."""
+    job = get_application(app_id)
+    if not job:
+        return redirect(url_for("dashboard"))
+
+    # Mark as pending so the review page shows the auto-reload spinner
+    update_application(app_id, "pending")
     from db.database import get_conn
     with get_conn() as conn:
         conn.execute(
             "UPDATE applications SET resume_path=NULL, ats_score=NULL, "
-            "original_ats_score=NULL, keywords=NULL WHERE id=?",
+            "original_ats_score=NULL, keywords=NULL, fit_summary=NULL, "
+            "jd_summary=NULL WHERE id=?",
             (app_id,)
         )
+
+    def _retailor(app_id, jd):
+        master_path = get_config("master_resume_path")
+        if not master_path or not jd:
+            logger.error("retailor: no master resume or JD for app_id=%s", app_id)
+            return
+        try:
+            tailor = tailor_resume(app_id, jd, master_path)
+            fit = generate_fit_summary(jd, master_path)
+            update_application(
+                app_id, "reviewed",
+                ats_score=tailor["ats_score"],
+                original_ats_score=tailor.get("original_ats_score"),
+                keywords=tailor.get("keywords_str"),
+                resume_path=tailor["docx_path"],
+                fit_summary=fit.get("raw", ""),
+                jd_summary=fit.get("jd_summary", ""),
+            )
+            logger.info("Re-tailored app_id=%s", app_id)
+        except Exception as e:
+            logger.error("Re-tailor failed for app_id=%s: %s", app_id, e, exc_info=True)
+            update_application(app_id, "failed")
+
+    threading.Thread(target=_retailor, args=(app_id, job.get("job_description", "")), daemon=True).start()
     return redirect(url_for("review_job", app_id=app_id))
+
+
+@app.route("/retry-pending", methods=["POST"])
+def retry_pending():
+    """Re-trigger tailoring for all jobs stuck in 'pending' status."""
+    pending = get_pending_jobs()
+    pending_only = [j for j in pending if j["status"] == "pending"]
+    if not pending_only:
+        return redirect(url_for("dashboard"))
+
+    def _tailor_pending(jobs):
+        master_path = get_config("master_resume_path")
+        if not master_path:
+            logger.error("retry-pending: no master_resume_path configured")
+            return
+        for job in jobs:
+            app_id = job["id"]
+            jd = job.get("job_description") or ""
+            if not jd:
+                continue
+            try:
+                logger.info("Retrying tailor for app_id=%s (%s)", app_id, job.get("title"))
+                tailor = tailor_resume(app_id, jd, master_path)
+                fit = generate_fit_summary(jd, master_path)
+                update_application(
+                    app_id, "reviewed",
+                    ats_score=tailor["ats_score"],
+                    original_ats_score=tailor.get("original_ats_score"),
+                    keywords=tailor.get("keywords_str"),
+                    resume_path=tailor["docx_path"],
+                    fit_summary=fit.get("raw", ""),
+                    jd_summary=fit.get("jd_summary", ""),
+                )
+            except Exception as e:
+                logger.error("Retry tailor failed for app_id=%s: %s", app_id, e, exc_info=True)
+                update_application(app_id, "failed")
+
+    threading.Thread(target=_tailor_pending, args=(pending_only,), daemon=True).start()
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/download/<int:app_id>")

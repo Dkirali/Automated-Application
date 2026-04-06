@@ -141,16 +141,24 @@
       </div>
     </form>
 
-    <form method="POST" action="/campaign/stop" style="margin-top:10px;">
-      <button type="submit" class="btn-stop">■ Stop</button>
-    </form>
+    <div class="campaign-bottom-row">
+      <form method="POST" action="/campaign/stop" class="stop-form">
+        <button type="submit" class="btn-stop">■ Stop Campaign</button>
+      </form>
+    </div>
   </div>
 
   <!-- Pending Review -->
   {% if pending_jobs %}
+    {% set stuck_count = pending_jobs | selectattr('status', 'equalto', 'pending') | list | length %}
     <div class="section-title section-title--pending">
       Pending Review
       <span class="section-badge">{{ pending_jobs | length }}</span>
+      {% if stuck_count > 0 %}
+        <form method="POST" action="/retry-pending" style="display:inline;margin-left:auto;">
+          <button type="submit" class="btn-retry" title="Re-run resume tailoring for {{ stuck_count }} stuck job(s)">↻ Retry {{ stuck_count }} pending</button>
+        </form>
+      {% endif %}
     </div>
     <div class="card-list pending-list">
       {% for job in pending_jobs %}
@@ -161,8 +169,10 @@
           <div class="app-card-body">
             <div class="app-card-title">{{ job.title }}</div>
             <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
-            {% if job.fit_summary %}
-              <div class="app-card-verdict">{{ job.fit_summary | truncate(90) }}</div>
+            {% if job.status == 'pending' %}
+              <div class="app-card-verdict" style="color:var(--clr-warning);font-size:11px;">⏳ Pending — tailoring queued</div>
+            {% elif job.status == 'reviewed' and not job.ats_score %}
+              <div class="app-card-verdict" style="color:var(--clr-success);font-size:11px;">✓ Ready for review</div>
             {% endif %}
           </div>
           <div class="app-card-right">
@@ -174,7 +184,7 @@
                     {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
                     <div class="ats-bar-fill {{ orig_class }}" style="width:{{ orig }}%"></div>
                   </div>
-                  <span class="ats-dual-pct">{{ orig }}%</span>
+                  <span class="ats-dual-pct ats-dual-pct--{{ orig_class }}">{{ orig }}%</span>
                 </div>
                 <div class="ats-dual-row">
                   <span class="ats-dual-label">After</span>
@@ -267,10 +277,10 @@
 
   <!-- Manual Queue -->
   {% if manual_queue %}
-    <div class="section-title" style="margin-top:28px;">Manual Queue</div>
+    <div class="section-title manual-queue-title">Manual Queue</div>
     <div class="card-list">
       {% for job in manual_queue %}
-        <div class="app-card" style="cursor:default;">
+        <div class="app-card app-card--static">
           <div class="app-card-body">
             <div class="app-card-title">{{ job.title }}</div>
             <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
@@ -351,6 +361,12 @@
 
   setInterval(pollStatus, 2000);
   pollStatus();
+
+  // Auto-reload the page every 5 s while a campaign is running so newly
+  // inserted/tailored jobs appear in the Pending list without a manual refresh.
+  {% if stats.status == 'running' %}
+  setTimeout(() => location.reload(), 5000);
+  {% endif %}
 </script>
 </body>
 </html>
