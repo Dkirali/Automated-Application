@@ -553,6 +553,19 @@ a:hover { text-decoration: underline; }
 }
 .btn-stop:hover { background: var(--clr-danger-tint); box-shadow: var(--glow-danger); border-color: var(--clr-danger); }
 
+.btn-retry {
+  background: transparent;
+  color: var(--clr-warning);
+  border: 1px solid var(--clr-warning);
+  padding: 4px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all .2s;
+}
+.btn-retry:hover { background: var(--clr-warning); color: #040c14; }
+
 .btn-sm {
   padding: 5px 12px;
   font-size: 12px;

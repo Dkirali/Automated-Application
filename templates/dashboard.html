@@ -150,9 +150,15 @@
 
   <!-- Pending Review -->
   {% if pending_jobs %}
+    {% set stuck_count = pending_jobs | selectattr('status', 'equalto', 'pending') | list | length %}
     <div class="section-title section-title--pending">
       Pending Review
       <span class="section-badge">{{ pending_jobs | length }}</span>
+      {% if stuck_count > 0 %}
+        <form method="POST" action="/retry-pending" style="display:inline;margin-left:auto;">
+          <button type="submit" class="btn-retry" title="Re-run resume tailoring for {{ stuck_count }} stuck job(s)">↻ Retry {{ stuck_count }} pending</button>
+        </form>
+      {% endif %}
     </div>
     <div class="card-list pending-list">
       {% for job in pending_jobs %}
