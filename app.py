@@ -371,14 +371,17 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
             if not master_path or not job.get("job_description"):
                 continue
             try:
-                from engine.resume import tailor_resume
                 tailor = tailor_resume(app_id, job["job_description"], master_path)
+                # Also generate fit summary (strengths, gaps, verdict, JD summary)
+                fit = generate_fit_summary(job["job_description"], master_path)
                 update_application(
                     app_id, "reviewed",
                     ats_score=tailor["ats_score"],
                     original_ats_score=tailor.get("original_ats_score"),
                     keywords=tailor.get("keywords_str"),
                     resume_path=tailor["docx_path"],
+                    fit_summary=fit.get("raw", ""),
+                    jd_summary=fit.get("jd_summary", ""),
                 )
             except Exception:
                 update_application(app_id, "failed")

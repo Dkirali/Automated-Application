@@ -171,8 +171,8 @@ def insert_manual(campaign_id, company, title, location, url, reason):
 def get_all_applications() -> list[dict]:
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT * FROM applications WHERE status IN ('pending','reviewed','applied','failed','discarded') "
-            "ORDER BY applied_at DESC"
+            "SELECT * FROM applications WHERE status IN ('applied','failed','discarded') "
+            "ORDER BY COALESCE(created_at, applied_at) DESC"
         ).fetchall()]
 
 def get_manual_queue() -> list[dict]:
@@ -217,7 +217,7 @@ def mark_applied(app_id: int):
 def get_pending_jobs() -> list[dict]:
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT * FROM applications WHERE status='pending' ORDER BY created_at DESC"
+            "SELECT * FROM applications WHERE status IN ('pending','reviewed') ORDER BY created_at DESC"
         ).fetchall()]
 
 def get_application(app_id: int) -> dict | None:
