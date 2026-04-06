@@ -171,7 +171,7 @@ def insert_manual(campaign_id, company, title, location, url, reason):
 def get_all_applications() -> list[dict]:
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT * FROM applications WHERE status IN ('applied','failed','discarded') "
+            "SELECT * FROM applications WHERE status IN ('pending','reviewed','applied','failed','discarded') "
             "ORDER BY applied_at DESC"
         ).fetchall()]
 
