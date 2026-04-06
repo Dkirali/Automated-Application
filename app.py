@@ -328,7 +328,8 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
             stop_event.wait(timeout=300)
             continue
 
-        added = 0
+        # Phase 1: insert all easy-apply jobs as 'pending' immediately
+        pending_jobs_to_tailor = []
         for job in jobs:
             if stop_event.is_set():
                 break
@@ -342,13 +343,50 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
                     "not_easy_apply",
                 )
                 continue
-            update(f"Tailoring resume for: {job.get('title', 'Unknown')} at {job.get('company', 'Unknown')}…")
-            process_job(campaign_id, job, stop_event)
-            added += 1
+            app_id = insert_application(
+                campaign_id,
+                job.get("company", "Unknown"),
+                job.get("title", "Unknown"),
+                job.get("location", ""),
+                job["url"],
+                job.get("job_description", ""),
+                easy_apply=True,
+            )
+            if app_id:
+                job["_app_id"] = app_id
+                pending_jobs_to_tailor.append(job)
 
+        if pending_jobs_to_tailor:
+            _alert = f"Added {len(pending_jobs_to_tailor)} job(s) to Pending — tailoring resumes now…"
+
+        # Phase 2: tailor resumes one by one
+        master_path = get_config("master_resume_path")
+        for job in pending_jobs_to_tailor:
+            if stop_event.is_set():
+                break
+            app_id = job["_app_id"]
+            title = job.get("title", "Unknown")
+            company = job.get("company", "Unknown")
+            update(f"Tailoring resume for: {title} at {company}…")
+            if not master_path or not job.get("job_description"):
+                continue
+            try:
+                from engine.resume import tailor_resume
+                tailor = tailor_resume(app_id, job["job_description"], master_path)
+                update_application(
+                    app_id, "reviewed",
+                    ats_score=tailor["ats_score"],
+                    original_ats_score=tailor.get("original_ats_score"),
+                    keywords=tailor.get("keywords_str"),
+                    resume_path=tailor["docx_path"],
+                )
+            except Exception:
+                update_application(app_id, "failed")
+
+        added = len(pending_jobs_to_tailor)
         if added:
-            update(f"Processed {added} job(s) — check Pending in the dashboard")
-            _alert = f"{added} new job(s) processed."
+            update(f"Added {added} job(s) to Pending — review them in the dashboard")
+            _alert = f"Added {added} job(s) to Pending – review them in the dashboard"
         stop_event.wait(timeout=300)  # wait before next scrape pass
 
     _status = "Idle"
