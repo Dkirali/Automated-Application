@@ -560,7 +560,9 @@ def download_resume(app_id):
     serve_path = pdf_path if pdf_path.exists() else docx_path
     if not serve_path.exists():
         return "File not found", 404
-    return send_file(serve_path, as_attachment=True)
+    job_title_slug = (app_row.get("title") or "Resume").replace(" ", "_")
+    download_name = f"Doruk_Kirali_{job_title_slug}{serve_path.suffix}"
+    return send_file(serve_path, as_attachment=True, download_name=download_name)
 
 
 @app.route("/resume-text/<int:app_id>")

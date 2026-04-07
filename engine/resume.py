@@ -8,6 +8,21 @@ load_dotenv()
 
 RESUMES_DIR = Path(__file__).parent.parent / "resumes"
 
+CANDIDATE_HEADER = {
+    "name":     "Doruk Kirali",
+    "phone":    "0532 286 04 61",
+    "email":    "kiralidoruk@gmail.com",
+    "linkedin": "linkedin.com/in/doruk-kirali",
+    "github":   "github.com/Dkirali",
+}
+
+# Lines containing these strings are stripped from LLM body output to avoid
+# duplicating the fixed header we prepend.
+_CONTACT_SKIP_PATTERNS = [
+    "kiralidoruk@gmail.com", "0532", "doruk-kirali",
+    "dkirali", "linkedin.com/in/doruk", "github.com/dkirali",
+]
+
 FIT_PROMPT = """You are a senior recruiter evaluating a candidate's fit for a role.
 
 Job Posting:
@@ -36,17 +51,21 @@ Task:
 1. Extract the 8-12 most important ATS keywords from the job posting (skills, tools, methodologies, titles).
 2. Rewrite the resume experience bullet points to naturally incorporate these keywords where truthful.
 3. Do NOT invent experience. Only rephrase existing content to better match the posting.
-4. Format the RESUME block using Markdown:
-   - Use ## for section headings (EXPERIENCE, EDUCATION, SKILLS, etc.)
-   - Use **Name** and **Job Title** for the candidate name and role titles
-   - Use - for bullet points in experience sections
-   - Use > for a profile/summary block if present
-   - Do NOT use HTML tags
+4. Format the RESUME block as plain text (no Markdown, no HTML):
+   - Section headings in ALL CAPS on their own line (e.g. PROFESSIONAL EXPERIENCE, EDUCATION, SKILLS, CERTIFICATES)
+   - Each role: "Company Name | Location | Start–End" on one line, then the job title on the next line
+   - Use • for main bullet points, - for sub-bullets
+   - Do NOT include the candidate name, phone, email, LinkedIn, or GitHub — those are added separately
+5. In the CERTIFICATES section, always include these two courses if not already present:
+   - Udemy — AI Coder: Vibe Coder to Agentic Engineer in 3 Weeks
+   - Udemy — AI Engineer Agentic Track: The Complete Agent & MCP Course
+6. You MAY add new bullet points to existing experience roles if the job posting requires a skill the candidate demonstrably has from their history. Do NOT invent entirely new roles or technologies not present anywhere in the resume.
+7. Only use the keyword "AI" where it genuinely refers to artificial intelligence concepts. Do NOT add "AI" as a substring match — do not treat words like "main", "rain", or "training" as containing the keyword "AI".
 
 Respond in this exact format:
 KEYWORDS: keyword1, keyword2, keyword3, ...
 RESUME:
-[Full rewritten resume in Markdown format, preserving all sections and structure]"""
+[Full rewritten resume as plain text, starting directly with the first section heading]"""
 
 
 def extract_keywords_from_response(response_text: str) -> list[str]:
@@ -65,7 +84,16 @@ def calculate_ats_score(keywords: list[str], resume_text: str) -> int:
     if not keywords:
         return 0
     text_lower = resume_text.lower()
-    matched = sum(1 for kw in keywords if kw.lower() in text_lower)
+
+    def matches(kw: str) -> bool:
+        kw_lower = kw.lower()
+        # Use whole-word matching for short keywords (≤4 chars) to avoid
+        # false positives like "ai" matching inside "main" or "training".
+        if len(kw_lower) <= 4:
+            return bool(re.search(r'\b' + re.escape(kw_lower) + r'\b', text_lower))
+        return kw_lower in text_lower
+
+    matched = sum(1 for kw in keywords if matches(kw))
     return round((matched / len(keywords)) * 100)
 
 
@@ -117,75 +145,118 @@ def read_docx_text(path: Path) -> str:
     return read_resume_text(path)
 
 
+def _add_section_heading(doc, text: str):
+    """Add a bold ALL-CAPS section heading with a bottom border rule."""
+    from docx.shared import Pt, RGBColor
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    p = doc.add_paragraph()
+    run = p.add_run(text.upper())
+    run.bold = True
+    run.font.size = Pt(11)
+    run.font.color.rgb = RGBColor(0x1a, 0x1a, 0x2e)
+    p.paragraph_format.space_before = Pt(10)
+    p.paragraph_format.space_after = Pt(2)
+    pPr = p._p.get_or_add_pPr()
+    pBdr = OxmlElement('w:pBdr')
+    bottom = OxmlElement('w:bottom')
+    bottom.set(qn('w:val'), 'single')
+    bottom.set(qn('w:sz'), '4')
+    bottom.set(qn('w:space'), '1')
+    bottom.set(qn('w:color'), 'CCCCCC')
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+
+
+SECTION_KEYWORDS = {
+    "professional experience", "experience", "education", "skills", "hard skills",
+    "management skills", "about", "about me", "summary", "references", "contact",
+    "projects", "certifications", "certificates", "languages", "tools", "internships",
+}
+
+
 def write_tailored_docx(master_path: Path, new_text: str, output_path: Path):
-    """Write tailored text to a .docx.
-    For .docx masters: preserve formatting by copying structure.
-    For .doc/.pdf masters: create a clean new document.
-    """
+    """Write tailored resume to .docx with fixed header block."""
     from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
     if master_path.suffix.lower() == ".docx":
+        # For .docx masters, still inject header at the start
         shutil.copy(master_path, output_path)
         doc = Document(output_path)
-        lines = [l for l in new_text.splitlines() if l.strip()]
-        para_idx = 0
+        # Clear all existing paragraphs and rebuild
         for para in doc.paragraphs:
-            if para.text.strip() and para_idx < len(lines):
-                for run in para.runs:
-                    run.text = ""
-                if para.runs:
-                    para.runs[0].text = lines[para_idx]
-                para_idx += 1
+            for run in para.runs:
+                run.text = ""
         doc.save(output_path)
-    else:
-        # PDF or .doc master — build a clean, styled document
-        from docx.shared import Pt, RGBColor
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        # Fall through to rebuild cleanly
         doc = Document()
-        # Tighten margins
+        for section in doc.sections:
+            section.top_margin = section.bottom_margin = Pt(36)
+            section.left_margin = section.right_margin = Pt(54)
+    else:
+        doc = Document()
         for section in doc.sections:
             section.top_margin = section.bottom_margin = Pt(36)
             section.left_margin = section.right_margin = Pt(54)
 
-        # Common section heading keywords
-        SECTION_KEYWORDS = {
-            "experience", "education", "skills", "hard skills", "management skills",
-            "about", "about me", "summary", "references", "contact", "projects",
-            "certifications", "languages", "tools",
-        }
+    # ── Fixed header ──────────────────────────────────────────────────────────
+    # Name
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run(CANDIDATE_HEADER["name"])
+    r.bold = True
+    r.font.size = Pt(18)
+    p.paragraph_format.space_after = Pt(2)
 
-        for line in new_text.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            low = stripped.lower().rstrip(":")
-            if low in SECTION_KEYWORDS:
-                p = doc.add_paragraph()
-                run = p.add_run(stripped.upper())
-                run.bold = True
-                run.font.size = Pt(11)
-                run.font.color.rgb = RGBColor(0x1a, 0x1a, 0x2e)
-                p.paragraph_format.space_before = Pt(10)
-                p.paragraph_format.space_after = Pt(2)
-                # Add a thin bottom border via XML
-                from docx.oxml.ns import qn
-                from docx.oxml import OxmlElement
-                pPr = p._p.get_or_add_pPr()
-                pBdr = OxmlElement('w:pBdr')
-                bottom = OxmlElement('w:bottom')
-                bottom.set(qn('w:val'), 'single')
-                bottom.set(qn('w:sz'), '4')
-                bottom.set(qn('w:space'), '1')
-                bottom.set(qn('w:color'), 'CCCCCC')
-                pBdr.append(bottom)
-                pPr.append(pBdr)
-            elif stripped.startswith(("•", "-", "*")):
-                p = doc.add_paragraph(style='List Bullet')
-                p.add_run(stripped.lstrip("•-* "))
-                p.paragraph_format.space_after = Pt(1)
-            else:
-                p = doc.add_paragraph(stripped)
-                p.paragraph_format.space_after = Pt(2)
-        doc.save(output_path)
+    # Job title (last held role — fixed)
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run("Product Operations Manager")
+    r.bold = True
+    r.font.size = Pt(12)
+    p.paragraph_format.space_after = Pt(4)
+
+    # Contact line
+    contact = (
+        f"{CANDIDATE_HEADER['phone']} • {CANDIDATE_HEADER['email']} • "
+        f"{CANDIDATE_HEADER['linkedin']} • {CANDIDATE_HEADER['github']}"
+    )
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run(contact)
+    r.font.size = Pt(9)
+    p.paragraph_format.space_after = Pt(8)
+
+    # ── Body ─────────────────────────────────────────────────────────────────
+    for line in new_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Skip any lines that duplicate the fixed header contact info
+        low = stripped.lower()
+        if any(pat in low for pat in _CONTACT_SKIP_PATTERNS):
+            continue
+
+        # Also skip lines that are just the candidate's name
+        if stripped.lower() == CANDIDATE_HEADER["name"].lower():
+            continue
+
+        # Section heading detection
+        if low.rstrip(":") in SECTION_KEYWORDS:
+            _add_section_heading(doc, stripped)
+        elif stripped.startswith(("•", "-", "*")):
+            p = doc.add_paragraph(style='List Bullet')
+            p.add_run(stripped.lstrip("•-* "))
+            p.paragraph_format.space_after = Pt(1)
+        else:
+            p = doc.add_paragraph(stripped)
+            p.paragraph_format.space_after = Pt(2)
+
+    doc.save(output_path)
 
 
 def export_pdf(docx_path: Path, pdf_path: Path):
@@ -252,7 +323,7 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
     if not tailored_text:
         tailored_text = resume_text  # fallback: use original if parse failed
 
-    # Score against tailored (Markdown) text and original master
+    # Score against tailored text and original master
     ats_score = calculate_ats_score(keywords, tailored_text)
     original_ats_score = calculate_original_ats_score(keywords, master_resume_path)
 
@@ -262,7 +333,7 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
     docx_path = job_dir / "tailored.docx"
     pdf_path = job_dir / "tailored.pdf"
 
-    # Strip Markdown before writing .docx so the download is clean plain text
+    # Strip any residual Markdown before writing
     write_tailored_docx(master_path, strip_markdown(tailored_text), docx_path)
 
     try:
@@ -275,7 +346,7 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
         "keywords_str": ", ".join(keywords),
         "ats_score": ats_score,
         "original_ats_score": original_ats_score,
-        "tailored_text": tailored_text,  # Markdown version for in-browser display
+        "tailored_text": tailored_text,
         "docx_path": str(docx_path),
         "pdf_path": str(pdf_path) if pdf_path else None,
     }
