@@ -283,8 +283,11 @@ function renderMarkdown(text) {
 /* ── Keyword highlighter ─────────────────────────────────────────── */
 function highlightKeywords(container, keywords) {
   if (!keywords || !keywords.length) return;
-  const escaped = keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
-  const pattern = new RegExp('(' + escaped.join('|') + ')', 'gi');
+  const parts = keywords.map(k => {
+    const esc = k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    return k.length <= 4 ? '\\b' + esc + '\\b' : esc;
+  });
+  const pattern = new RegExp('(' + parts.join('|') + ')', 'gi');
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   const nodes = [];
   let node;

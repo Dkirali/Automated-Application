@@ -67,6 +67,33 @@ KEYWORDS: keyword1, keyword2, keyword3, ...
 RESUME:
 [Full rewritten resume as plain text, starting directly with the first section heading]"""
 
+TAILOR_RETRY_PROMPT = """The following tailored resume scored below 80% ATS keyword match.
+
+These keywords are MISSING from the resume and MUST be incorporated: {missing_keywords}
+
+Job Posting:
+{job_description}
+
+Current Resume:
+{resume}
+
+Rewrite the resume to naturally incorporate ALL of the missing keywords listed above.
+Keep all existing content and structure. Only add or rephrase content — do not remove anything.
+Do NOT include contact info (name, phone, email, LinkedIn, GitHub).
+
+Respond in this exact format:
+RESUME:
+[Full rewritten resume as plain text]"""
+
+
+def _matches_keyword(kw: str, text: str) -> bool:
+    """Check if a keyword appears in text using whole-word matching for short keywords."""
+    kw_lower = kw.lower()
+    text_lower = text.lower()
+    if len(kw_lower) <= 4:
+        return bool(re.search(r'\b' + re.escape(kw_lower) + r'\b', text_lower))
+    return kw_lower in text_lower
+
 
 def extract_keywords_from_response(response_text: str) -> list[str]:
     match = re.search(r"KEYWORDS:\s*([^\n]+)", response_text)
@@ -83,17 +110,7 @@ def extract_resume_from_response(response_text: str) -> str:
 def calculate_ats_score(keywords: list[str], resume_text: str) -> int:
     if not keywords:
         return 0
-    text_lower = resume_text.lower()
-
-    def matches(kw: str) -> bool:
-        kw_lower = kw.lower()
-        # Use whole-word matching for short keywords (≤4 chars) to avoid
-        # false positives like "ai" matching inside "main" or "training".
-        if len(kw_lower) <= 4:
-            return bool(re.search(r'\b' + re.escape(kw_lower) + r'\b', text_lower))
-        return kw_lower in text_lower
-
-    matched = sum(1 for kw in keywords if matches(kw))
+    matched = sum(1 for kw in keywords if _matches_keyword(kw, resume_text))
     return round((matched / len(keywords)) * 100)
 
 
@@ -387,6 +404,25 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
     # Score against tailored text and original master
     ats_score = calculate_ats_score(keywords, tailored_text)
     original_ats_score = calculate_original_ats_score(keywords, master_resume_path)
+
+    # Retry once if ATS score is below 80%
+    if ats_score < 80 and keywords:
+        missing = [kw for kw in keywords if not _matches_keyword(kw, tailored_text)]
+        if missing:
+            try:
+                retry_response = _call_llm(TAILOR_RETRY_PROMPT.format(
+                    missing_keywords=", ".join(missing),
+                    job_description=job_description,
+                    resume=tailored_text,
+                ), max_tokens=2048)
+                retry_text = extract_resume_from_response(retry_response)
+                if retry_text:
+                    retry_score = calculate_ats_score(keywords, retry_text)
+                    if retry_score > ats_score:
+                        tailored_text = retry_text
+                        ats_score = retry_score
+            except Exception:
+                pass  # keep first attempt if retry fails
 
     job_dir = RESUMES_DIR / str(job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
