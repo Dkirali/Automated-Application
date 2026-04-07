@@ -405,25 +405,6 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
     ats_score = calculate_ats_score(keywords, tailored_text)
     original_ats_score = calculate_original_ats_score(keywords, master_resume_path)
 
-    # Retry once if ATS score is below 80%
-    if ats_score < 80 and keywords:
-        missing = [kw for kw in keywords if not _matches_keyword(kw, tailored_text)]
-        if missing:
-            try:
-                retry_response = _call_llm(TAILOR_RETRY_PROMPT.format(
-                    missing_keywords=", ".join(missing),
-                    job_description=job_description,
-                    resume=tailored_text,
-                ), max_tokens=2048)
-                retry_text = extract_resume_from_response(retry_response)
-                if retry_text:
-                    retry_score = calculate_ats_score(keywords, retry_text)
-                    if retry_score > ats_score:
-                        tailored_text = retry_text
-                        ats_score = retry_score
-            except Exception:
-                pass  # keep first attempt if retry fails
-
     job_dir = RESUMES_DIR / str(job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
 
