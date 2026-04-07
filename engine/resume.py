@@ -231,30 +231,91 @@ def write_tailored_docx(master_path: Path, new_text: str, output_path: Path):
     p.paragraph_format.space_after = Pt(8)
 
     # ── Body ─────────────────────────────────────────────────────────────────
-    for line in new_text.splitlines():
-        stripped = line.strip()
+    # Detect lines with pipe separators as company/role metadata:
+    #   "Company Name | Location | Dates"  → company line
+    #   Next non-bullet line after a company line → job title (bold)
+    lines = new_text.splitlines()
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        i += 1
         if not stripped:
             continue
 
-        # Skip any lines that duplicate the fixed header contact info
+        # Skip contact duplicates
         low = stripped.lower()
         if any(pat in low for pat in _CONTACT_SKIP_PATTERNS):
             continue
-
-        # Also skip lines that are just the candidate's name
         if stripped.lower() == CANDIDATE_HEADER["name"].lower():
             continue
 
-        # Section heading detection
+        # Section heading
         if low.rstrip(":") in SECTION_KEYWORDS:
             _add_section_heading(doc, stripped)
-        elif stripped.startswith(("•", "-", "*")):
+            continue
+
+        # Bullet points
+        if stripped.startswith(("•", "-", "*")):
             p = doc.add_paragraph(style='List Bullet')
             p.add_run(stripped.lstrip("•-* "))
             p.paragraph_format.space_after = Pt(1)
-        else:
-            p = doc.add_paragraph(stripped)
-            p.paragraph_format.space_after = Pt(2)
+            continue
+
+        # Company/role line: contains | separators (e.g. "Styx Intelligence | Vancouver, Canada | 2022–2024")
+        if "|" in stripped:
+            parts = [p.strip() for p in stripped.split("|")]
+            company = parts[0]
+            location_dates = " | ".join(parts[1:])
+
+            # Add space before each new experience entry
+            p_spacer = doc.add_paragraph()
+            p_spacer.paragraph_format.space_before = Pt(4)
+            p_spacer.paragraph_format.space_after = Pt(0)
+
+            # Company name — regular weight on its own line
+            p = doc.add_paragraph()
+            r = p.add_run(company)
+            r.font.size = Pt(10)
+            p.paragraph_format.space_after = Pt(0)
+            p.paragraph_format.space_before = Pt(0)
+
+            # Next non-empty line should be the job title
+            title_line = ""
+            while i < len(lines):
+                candidate = lines[i].strip()
+                i += 1
+                if candidate:
+                    title_line = candidate
+                    break
+
+            # Job title (bold) with location | dates right-aligned
+            if title_line:
+                p = doc.add_paragraph()
+                p.paragraph_format.space_after = Pt(2)
+                p.paragraph_format.space_before = Pt(0)
+                # Use a tab stop at the right margin for right-alignment
+                from docx.shared import Inches
+                from docx.oxml.ns import qn
+                from docx.oxml import OxmlElement
+                pPr = p._p.get_or_add_pPr()
+                tabs = OxmlElement('w:tabs')
+                tab = OxmlElement('w:tab')
+                tab.set(qn('w:val'), 'right')
+                tab.set(qn('w:pos'), '9360')  # ~6.5 inches
+                tabs.append(tab)
+                pPr.append(tabs)
+
+                r = p.add_run(title_line)
+                r.bold = True
+                r.font.size = Pt(10)
+                if location_dates:
+                    r2 = p.add_run(f"\t{location_dates}")
+                    r2.font.size = Pt(10)
+            continue
+
+        # Any other plain text line
+        p = doc.add_paragraph(stripped)
+        p.paragraph_format.space_after = Pt(2)
 
     doc.save(output_path)
 
