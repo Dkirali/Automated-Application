@@ -121,6 +121,12 @@ def dashboard():
     resume_path = get_config("master_resume_path")
     resume_name = Path(resume_path).name if resume_path else None
     pending = get_pending_jobs()
+    # Parse fit data for dashboard cards
+    from engine.resume import parse_fit_score, parse_fit_field
+    for job in pending:
+        raw = job.get("fit_summary") or ""
+        job["fit_score"] = parse_fit_score(raw)
+        job["verdict"] = parse_fit_field(raw, "VERDICT")
     campaigns = get_all_campaigns()
     return render_template("dashboard.html",
                            linkedin_connected=_linkedin_connected(),
@@ -462,6 +468,14 @@ def apply_job(app_id):
 @app.route("/discard/<int:app_id>", methods=["POST"])
 def discard_job(app_id):
     update_application(app_id, "discarded")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/bulk-discard", methods=["POST"])
+def bulk_discard():
+    ids = request.form.getlist("job_ids")
+    for app_id in ids:
+        update_application(int(app_id), "discarded")
     return redirect(url_for("dashboard"))
 
 

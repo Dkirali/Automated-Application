@@ -160,54 +160,77 @@
         </form>
       {% endif %}
     </div>
+    <form id="bulk-form" method="POST" action="/bulk-discard">
     <div class="card-list pending-list">
       {% for job in pending_jobs %}
         {% set orig  = job.original_ats_score or 0 %}
         {% set tail  = job.ats_score or 0 %}
         {% set tail_class = 'high' if tail >= 70 else ('medium' if tail >= 40 else 'low') %}
-        <a class="app-card app-card--pending" href="/review/{{ job.id }}">
-          <div class="app-card-body">
-            <div class="app-card-title">{{ job.title }}</div>
-            <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
-            {% if job.status == 'pending' %}
-              <div class="app-card-verdict" style="color:var(--clr-warning);font-size:11px;">⏳ Pending — tailoring queued</div>
-            {% elif job.status == 'reviewed' and not job.ats_score %}
-              <div class="app-card-verdict" style="color:var(--clr-success);font-size:11px;">✓ Ready for review</div>
-            {% endif %}
-          </div>
-          <div class="app-card-right">
-            {% if tail %}
-              <div class="ats-dual-mini">
-                <div class="ats-dual-row">
-                  <span class="ats-dual-label">Before</span>
-                  <div class="ats-bar-wrap ats-bar-wrap--sm">
+        {% set fs = job.fit_score or 0 %}
+        {% set fs_class = 'high' if fs >= 70 else ('medium' if fs >= 40 else 'low') %}
+        <div class="app-card app-card--pending">
+          <label class="job-checkbox-wrap" onclick="event.stopPropagation();">
+            <input type="checkbox" name="job_ids" value="{{ job.id }}" class="job-checkbox" onchange="updateBulkBar()">
+            <span class="job-checkbox-box"></span>
+          </label>
+          <a class="app-card-inner" href="/review/{{ job.id }}">
+            <div class="app-card-body">
+              <div class="app-card-title">{{ job.title }}</div>
+              <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
+              {% if job.status == 'pending' %}
+                <div class="app-card-verdict" style="color:var(--clr-warning);font-size:11px;">⏳ Pending — tailoring queued</div>
+              {% elif fs %}
+                <div class="app-card-fit">
+                  <span class="fit-badge fit-badge--{{ fs_class }}">{{ fs }}% fit</span>
+                  {% if job.verdict %}
+                    <span class="fit-verdict-snippet">{{ job.verdict | truncate(70) }}</span>
+                  {% endif %}
+                </div>
+              {% elif job.status == 'reviewed' and not job.ats_score %}
+                <div class="app-card-verdict" style="color:var(--clr-success);font-size:11px;">✓ Ready for review</div>
+              {% endif %}
+            </div>
+            <div class="app-card-right">
+              {% if tail %}
+                <div class="ats-dual-mini">
+                  <div class="ats-dual-row">
+                    <span class="ats-dual-label">Before</span>
+                    <div class="ats-bar-wrap ats-bar-wrap--sm">
+                      {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
+                      <div class="ats-bar-fill {{ orig_class }}" style="width:{{ orig }}%"></div>
+                    </div>
+                    <span class="ats-dual-pct ats-dual-pct--{{ orig_class }}">{{ orig }}%</span>
+                  </div>
+                  <div class="ats-dual-row">
+                    <span class="ats-dual-label">After</span>
+                    <div class="ats-bar-wrap ats-bar-wrap--sm">
+                      <div class="ats-bar-fill {{ tail_class }}" style="width:{{ tail }}%"></div>
+                    </div>
+                    <span class="ats-dual-pct ats-dual-pct--{{ tail_class }}">{{ tail }}%</span>
+                  </div>
+                </div>
+              {% elif orig %}
+                <div class="ats-mini">
+                  <span class="ats-mini-label">ATS {{ orig }}%</span>
+                  <div class="ats-bar-wrap">
                     {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
                     <div class="ats-bar-fill {{ orig_class }}" style="width:{{ orig }}%"></div>
                   </div>
-                  <span class="ats-dual-pct ats-dual-pct--{{ orig_class }}">{{ orig }}%</span>
                 </div>
-                <div class="ats-dual-row">
-                  <span class="ats-dual-label">After</span>
-                  <div class="ats-bar-wrap ats-bar-wrap--sm">
-                    <div class="ats-bar-fill {{ tail_class }}" style="width:{{ tail }}%"></div>
-                  </div>
-                  <span class="ats-dual-pct ats-dual-pct--{{ tail_class }}">{{ tail }}%</span>
-                </div>
-              </div>
-            {% elif orig %}
-              <div class="ats-mini">
-                <span class="ats-mini-label">ATS {{ orig }}%</span>
-                <div class="ats-bar-wrap">
-                  {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
-                  <div class="ats-bar-fill {{ orig_class }}" style="width:{{ orig }}%"></div>
-                </div>
-              </div>
-            {% endif %}
-            <span class="badge badge-pending">Review →</span>
-          </div>
-        </a>
+              {% endif %}
+              <span class="badge badge-pending">Review →</span>
+            </div>
+          </a>
+        </div>
       {% endfor %}
     </div>
+    <!-- Bulk action bar — hidden until checkboxes are selected -->
+    <div class="bulk-bar" id="bulk-bar" style="display:none;">
+      <span class="bulk-bar-count" id="bulk-count">0 selected</span>
+      <button type="button" class="bulk-bar-btn bulk-bar-btn--select-all" onclick="toggleSelectAll()">Select All</button>
+      <button type="submit" class="bulk-bar-btn bulk-bar-btn--discard">Discard Selected</button>
+    </div>
+    </form>
   {% endif %}
 
   <!-- Applications -->
@@ -361,6 +384,26 @@
 
   setInterval(pollStatus, 2000);
   pollStatus();
+
+  /* Bulk action bar */
+  function updateBulkBar() {
+    const checked = document.querySelectorAll('.job-checkbox:checked');
+    const bar = document.getElementById('bulk-bar');
+    if (!bar) return;
+    if (checked.length > 0) {
+      bar.style.display = 'flex';
+      document.getElementById('bulk-count').textContent = checked.length + ' selected';
+    } else {
+      bar.style.display = 'none';
+    }
+  }
+
+  function toggleSelectAll() {
+    const boxes = document.querySelectorAll('.job-checkbox');
+    const allChecked = Array.from(boxes).every(cb => cb.checked);
+    boxes.forEach(cb => cb.checked = !allChecked);
+    updateBulkBar();
+  }
 
   // Auto-reload the page every 5 s while a campaign is running so newly
   // inserted/tailored jobs appear in the Pending list without a manual refresh.

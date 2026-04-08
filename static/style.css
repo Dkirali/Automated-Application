@@ -961,10 +961,16 @@ a:hover { text-decoration: underline; }
 /* ─── Pending Cards ───────────────────────────────────────────────────────── */
 .app-card--pending {
   border-left: 3px solid var(--clr-primary);
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  cursor: default;
 }
 .app-card--pending:hover {
-  background: var(--clr-primary-tint);
   border-color: var(--clr-primary);
+  box-shadow: var(--glow-primary), -4px 0 14px rgba(0,212,255,.25);
+  background: var(--clr-surface2);
 }
 .app-card-verdict {
   font-size: 12px;
@@ -981,6 +987,146 @@ a:hover { text-decoration: underline; }
 .badge-discarded {
   background: var(--clr-surface2);
   color: var(--clr-text-muted);
+}
+
+/* ─── Checkbox + Fit Badge on Dashboard Cards ────────────────────────────── */
+.job-checkbox-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  flex-shrink: 0;
+  cursor: pointer;
+  padding: 0 4px 0 8px;
+}
+.job-checkbox { display: none; }
+.job-checkbox-box {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--clr-border);
+  border-radius: 3px;
+  background: transparent;
+  transition: all .15s ease;
+  position: relative;
+}
+.job-checkbox:checked + .job-checkbox-box {
+  background: var(--clr-primary);
+  border-color: var(--clr-primary);
+}
+.job-checkbox:checked + .job-checkbox-box::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--clr-bg);
+}
+.job-checkbox-wrap:hover .job-checkbox-box {
+  border-color: var(--clr-primary);
+  box-shadow: 0 0 8px rgba(0,212,255,.25);
+}
+
+.app-card-inner {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+  padding: 14px 16px 14px 8px;
+  gap: 16px;
+}
+
+.app-card-fit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.fit-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: .02em;
+  white-space: nowrap;
+}
+.fit-badge--high {
+  background: var(--clr-success-tint);
+  color: var(--clr-success);
+  border: 1px solid rgba(0,255,136,.25);
+}
+.fit-badge--medium {
+  background: var(--clr-warning-tint);
+  color: var(--clr-warning);
+  border: 1px solid rgba(255,183,0,.25);
+}
+.fit-badge--low {
+  background: var(--clr-danger-tint);
+  color: var(--clr-danger);
+  border: 1px solid rgba(255,51,85,.25);
+}
+.fit-verdict-snippet {
+  font-size: 11px;
+  color: var(--clr-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+/* ─── Bulk Action Bar ────────────────────────────────────────────────────── */
+.bulk-bar {
+  position: sticky;
+  bottom: 0;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-primary);
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: var(--glow-primary);
+  z-index: 50;
+}
+.bulk-bar-count {
+  font-family: var(--font-hud);
+  font-size: 13px;
+  color: var(--clr-primary);
+  font-weight: 600;
+}
+.bulk-bar-btn {
+  font-family: var(--font-hud);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--clr-border);
+  background: var(--clr-surface2);
+  color: var(--clr-text);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.bulk-bar-btn:hover {
+  border-color: var(--clr-primary);
+  box-shadow: 0 0 8px rgba(0,212,255,.2);
+}
+.bulk-bar-btn--discard {
+  background: var(--clr-danger-tint);
+  color: var(--clr-danger);
+  border-color: rgba(255,51,85,.3);
+  margin-left: auto;
+}
+.bulk-bar-btn--discard:hover {
+  border-color: var(--clr-danger);
+  box-shadow: var(--glow-danger);
 }
 
 /* ─── Review Page ─────────────────────────────────────────────────────────── */
@@ -1470,16 +1616,6 @@ mark.kw-highlight {
   filter: brightness(1.12);
   box-shadow: 0 0 28px rgba(79,255,176,.55);
   transform: translateY(-1px);
-}
-
-/* ─── Pending card: neon left border + glow on hover ────────────────────── */
-.app-card--pending {
-  border-left: 3px solid var(--clr-primary);
-}
-.app-card--pending:hover {
-  border-color: var(--clr-primary);
-  box-shadow: var(--glow-primary), -4px 0 14px rgba(0,212,255,.25);
-  background: var(--clr-surface2);
 }
 
 /* ─── Dual ATS mini-bars on dashboard cards ──────────────────────────────── */
