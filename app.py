@@ -472,24 +472,29 @@ def retailor_job(app_id):
     if not job:
         return redirect(url_for("dashboard"))
 
+    # Preserve existing keywords so original ATS score stays stable on re-tailor
+    stored_keywords_str = job.get("keywords") or ""
+    stored_keywords = [k.strip() for k in stored_keywords_str.split(",") if k.strip()]
+
     # Mark as pending so the review page shows the auto-reload spinner
     update_application(app_id, "pending")
     from db.database import get_conn
     with get_conn() as conn:
         conn.execute(
             "UPDATE applications SET resume_path=NULL, ats_score=NULL, "
-            "original_ats_score=NULL, keywords=NULL, fit_summary=NULL, "
+            "original_ats_score=NULL, fit_summary=NULL, "
             "jd_summary=NULL WHERE id=?",
             (app_id,)
         )
 
-    def _retailor(app_id, jd):
+    def _retailor(app_id, jd, existing_kw):
         master_path = get_config("master_resume_path")
         if not master_path or not jd:
             logger.error("retailor: no master resume or JD for app_id=%s", app_id)
             return
         try:
-            tailor = tailor_resume(app_id, jd, master_path)
+            tailor = tailor_resume(app_id, jd, master_path,
+                                  existing_keywords=existing_kw or None)
             fit = generate_fit_summary(jd, master_path)
             update_application(
                 app_id, "reviewed",
@@ -505,7 +510,7 @@ def retailor_job(app_id):
             logger.error("Re-tailor failed for app_id=%s: %s", app_id, e, exc_info=True)
             update_application(app_id, "failed")
 
-    threading.Thread(target=_retailor, args=(app_id, job.get("job_description", "")), daemon=True).start()
+    threading.Thread(target=_retailor, args=(app_id, job.get("job_description", ""), stored_keywords), daemon=True).start()
     return redirect(url_for("review_job", app_id=app_id))
 
 

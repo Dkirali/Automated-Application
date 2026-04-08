@@ -388,7 +388,8 @@ def _call_llm(prompt: str, max_tokens: int = 2048) -> str:
     raise RuntimeError("No API key set — add a Groq, Gemini, or Anthropic key in Settings")
 
 
-def tailor_resume(job_id: int, job_description: str, master_resume_path: str) -> dict:
+def tailor_resume(job_id: int, job_description: str, master_resume_path: str,
+                  existing_keywords: list[str] | None = None) -> dict:
     master_path = Path(master_resume_path)
     if not master_path.exists():
         raise FileNotFoundError(f"Master resume not found: {master_resume_path}")
@@ -402,7 +403,12 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str) ->
     except Exception as e:
         raise RuntimeError(f"LLM API error: {e}") from e
 
-    keywords = extract_keywords_from_response(response_text)
+    # Reuse stored keywords on re-tailor so the original score stays stable
+    if existing_keywords:
+        keywords = existing_keywords
+    else:
+        keywords = extract_keywords_from_response(response_text)
+
     tailored_text = extract_resume_from_response(response_text)
     if not tailored_text:
         tailored_text = resume_text  # fallback: use original if parse failed
