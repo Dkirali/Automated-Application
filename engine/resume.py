@@ -49,7 +49,13 @@ Current Resume:
 
 Task:
 1. Extract the 8-12 most important ATS keywords from the job posting (skills, tools, methodologies, titles).
-2. Rewrite the resume experience bullet points to naturally incorporate these keywords where truthful.
+2. Rewrite the resume experience bullet points to incorporate these keywords where truthful.
+   CRITICAL RULES for keyword incorporation:
+   - Keywords must appear as PART OF THE NATURAL SENTENCE describing what was done. Good: "Led sprint planning using Agile methodologies". Bad: "Led sprint planning, demonstrating Agile skills".
+   - NEVER append keyword labels to the end of a sentence (e.g. "showcasing Operational Efficiency", "utilizing Stakeholder Management", "demonstrating Communication skills"). This reads as spam.
+   - NEVER start or end a bullet with a generic phrase like "applying X and Y skills" or "ensuring effective Z". Instead, describe the ACTUAL WORK that used those skills.
+   - Each bullet should describe a concrete action and result, not list skill categories.
+   - If a keyword cannot be naturally woven into existing content, place it in the SKILLS section instead.
 3. Do NOT invent experience. Only rephrase existing content to better match the posting.
 4. Format the RESUME block as plain text (no Markdown, no HTML):
    - Section headings in ALL CAPS on their own line (e.g. PROFESSIONAL EXPERIENCE, EDUCATION, SKILLS, CERTIFICATES)
@@ -60,7 +66,7 @@ Task:
    - Udemy — AI Coder: Vibe Coder to Agentic Engineer in 3 Weeks
    - Udemy — AI Engineer Agentic Track: The Complete Agent & MCP Course
 6. You MAY add new bullet points to existing experience roles if the job posting requires a skill the candidate demonstrably has from their history. Do NOT invent entirely new roles or technologies not present anywhere in the resume.
-7. Only use the keyword "AI" where it genuinely refers to artificial intelligence concepts. Do NOT add "AI" as a substring match — do not treat words like "main", "rain", or "training" as containing the keyword "AI".
+7. Only use the keyword "AI" where it genuinely refers to artificial intelligence concepts. Do NOT treat words like "main", "rain", or "training" as containing the keyword "AI".
 
 Respond in this exact format:
 KEYWORDS: keyword1, keyword2, keyword3, ...
