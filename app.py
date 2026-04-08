@@ -348,6 +348,8 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
         global _status
         _status = msg
 
+    total_jobs_added = 0
+
     while not stop_event.is_set():
         update(f"Scraping LinkedIn for: {', '.join(titles)}…")
 
@@ -355,11 +357,12 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
         # finds each one.  This guarantees that even if the user stops the
         # campaign mid-scrape, every discovered job already has its resume.
         jobs_found = 0
+        jobs_failed = 0
         master_path = get_config("master_resume_path")
 
         def on_job_found(job):
             """Called by scraper for each job as it's discovered."""
-            nonlocal jobs_found
+            nonlocal jobs_found, jobs_failed
             if not job.get("easy_apply"):
                 insert_manual(
                     campaign_id,
@@ -389,24 +392,35 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
             company = job.get("company", "Unknown")
             if not master_path or not jd:
                 return
-            update(f"Tailoring resume for: {title} at {company}…")
+            update(f"[{jobs_found} found] Tailoring: {title} at {company}…")
             try:
                 tailor = tailor_resume(app_id, jd, master_path)
-                fit = generate_fit_summary(jd, master_path)
                 update_application(
                     app_id, "reviewed",
                     ats_score=tailor["ats_score"],
                     original_ats_score=tailor.get("original_ats_score"),
                     keywords=tailor.get("keywords_str"),
                     resume_path=tailor["docx_path"],
-                    fit_summary=fit.get("raw", ""),
-                    jd_summary=fit.get("jd_summary", ""),
                 )
                 logger.info("Tailored app_id=%s (%s at %s)", app_id, title, company)
             except Exception as e:
+                jobs_failed += 1
                 logger.error("Tailoring failed for app_id=%s (%s at %s): %s",
                              app_id, title, company, e, exc_info=True)
                 update_application(app_id, "failed")
+                return
+
+            # Fit summary is optional — don't fail the job if this call errors
+            try:
+                fit = generate_fit_summary(jd, master_path)
+                update_application(
+                    app_id, "reviewed",
+                    fit_summary=fit.get("raw", ""),
+                    jd_summary=fit.get("jd_summary", ""),
+                )
+            except Exception as e:
+                logger.warning("Fit summary failed for app_id=%s (non-fatal): %s",
+                               app_id, e)
 
         try:
             scrape_jobs(titles, filters, seen_urls, stop_event,
@@ -417,14 +431,17 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
             _status = f"Scraper error: {e}"
             break
 
+        total_jobs_added += jobs_found
+
         if not jobs_found:
             _wait_with_countdown(update, stop_event, 300,
-                                 "No new jobs — re-scanning in {remaining}")
+                                 f"All pages scraped, {total_jobs_added} total jobs found — re-scanning in {{remaining}}")
             continue
 
-        _alert = f"Added {jobs_found} job(s) – review them in the dashboard"
+        fail_note = f" ({jobs_failed} failed)" if jobs_failed else ""
+        _alert = f"Added {jobs_found} job(s){fail_note} – review them in the dashboard"
         _wait_with_countdown(update, stop_event, 300,
-                             f"Processed {jobs_found} job(s) — next scan in {{remaining}}")
+                             f"Done: {jobs_found} new, {total_jobs_added} total — next scan in {{remaining}}")
 
     _status = "Idle"
     campaign = get_active_campaign()
@@ -525,20 +542,28 @@ def retailor_job(app_id):
         try:
             tailor = tailor_resume(app_id, jd, master_path,
                                   existing_keywords=existing_kw or None)
-            fit = generate_fit_summary(jd, master_path)
             update_application(
                 app_id, "reviewed",
                 ats_score=tailor["ats_score"],
                 original_ats_score=tailor.get("original_ats_score"),
                 keywords=tailor.get("keywords_str"),
                 resume_path=tailor["docx_path"],
-                fit_summary=fit.get("raw", ""),
-                jd_summary=fit.get("jd_summary", ""),
             )
             logger.info("Re-tailored app_id=%s", app_id)
         except Exception as e:
             logger.error("Re-tailor failed for app_id=%s: %s", app_id, e, exc_info=True)
             update_application(app_id, "failed")
+            return
+
+        try:
+            fit = generate_fit_summary(jd, master_path)
+            update_application(
+                app_id, "reviewed",
+                fit_summary=fit.get("raw", ""),
+                jd_summary=fit.get("jd_summary", ""),
+            )
+        except Exception as e:
+            logger.warning("Fit summary failed for app_id=%s (non-fatal): %s", app_id, e)
 
     threading.Thread(target=_retailor, args=(app_id, job.get("job_description", ""), stored_keywords), daemon=True).start()
     return redirect(url_for("review_job", app_id=app_id))
@@ -565,19 +590,27 @@ def retry_pending():
             try:
                 logger.info("Retrying tailor for app_id=%s (%s)", app_id, job.get("title"))
                 tailor = tailor_resume(app_id, jd, master_path)
-                fit = generate_fit_summary(jd, master_path)
                 update_application(
                     app_id, "reviewed",
                     ats_score=tailor["ats_score"],
                     original_ats_score=tailor.get("original_ats_score"),
                     keywords=tailor.get("keywords_str"),
                     resume_path=tailor["docx_path"],
-                    fit_summary=fit.get("raw", ""),
-                    jd_summary=fit.get("jd_summary", ""),
                 )
             except Exception as e:
                 logger.error("Retry tailor failed for app_id=%s: %s", app_id, e, exc_info=True)
                 update_application(app_id, "failed")
+                continue
+
+            try:
+                fit = generate_fit_summary(jd, master_path)
+                update_application(
+                    app_id, "reviewed",
+                    fit_summary=fit.get("raw", ""),
+                    jd_summary=fit.get("jd_summary", ""),
+                )
+            except Exception as e:
+                logger.warning("Fit summary failed for app_id=%s (non-fatal): %s", app_id, e)
 
     threading.Thread(target=_tailor_pending, args=(pending_only,), daemon=True).start()
     return redirect(url_for("dashboard"))
@@ -636,20 +669,28 @@ def _retry_stale_jobs():
             jd = job["job_description"]
             try:
                 tailor = tailor_resume(app_id, jd, master_path)
-                fit = generate_fit_summary(jd, master_path)
                 update_application(
                     app_id, "reviewed",
                     ats_score=tailor["ats_score"],
                     original_ats_score=tailor.get("original_ats_score"),
                     keywords=tailor.get("keywords_str"),
                     resume_path=tailor["docx_path"],
-                    fit_summary=fit.get("raw", ""),
-                    jd_summary=fit.get("jd_summary", ""),
                 )
                 logger.info("Auto-retry succeeded for app_id=%s (%s)", app_id, job.get("title"))
             except Exception as e:
                 logger.error("Auto-retry failed for app_id=%s: %s", app_id, e)
                 update_application(app_id, "failed")
+                continue
+
+            try:
+                fit = generate_fit_summary(jd, master_path)
+                update_application(
+                    app_id, "reviewed",
+                    fit_summary=fit.get("raw", ""),
+                    jd_summary=fit.get("jd_summary", ""),
+                )
+            except Exception as e:
+                logger.warning("Fit summary failed for app_id=%s (non-fatal): %s", app_id, e)
 
     threading.Thread(target=_run, args=(stale,), daemon=True).start()
 
