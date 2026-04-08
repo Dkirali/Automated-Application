@@ -596,7 +596,50 @@ def resume_text(app_id):
     return jsonify({"text": text, "keywords": keywords})
 
 
+def _retry_stale_jobs():
+    """Re-queue tailoring for jobs stuck as 'pending' or 'failed' from a previous crash."""
+    master_path = get_config("master_resume_path")
+    if not master_path:
+        return
+
+    from db.database import get_conn
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM applications WHERE status IN ('pending', 'failed') "
+            "AND job_description IS NOT NULL AND job_description != ''",
+        ).fetchall()
+    stale = [dict(r) for r in rows]
+
+    if not stale:
+        return
+    logger.info("Auto-retrying %d stale job(s) from previous session", len(stale))
+
+    def _run(jobs):
+        for job in jobs:
+            app_id = job["id"]
+            jd = job["job_description"]
+            try:
+                tailor = tailor_resume(app_id, jd, master_path)
+                fit = generate_fit_summary(jd, master_path)
+                update_application(
+                    app_id, "reviewed",
+                    ats_score=tailor["ats_score"],
+                    original_ats_score=tailor.get("original_ats_score"),
+                    keywords=tailor.get("keywords_str"),
+                    resume_path=tailor["docx_path"],
+                    fit_summary=fit.get("raw", ""),
+                    jd_summary=fit.get("jd_summary", ""),
+                )
+                logger.info("Auto-retry succeeded for app_id=%s (%s)", app_id, job.get("title"))
+            except Exception as e:
+                logger.error("Auto-retry failed for app_id=%s: %s", app_id, e)
+                update_application(app_id, "failed")
+
+    threading.Thread(target=_run, args=(stale,), daemon=True).start()
+
+
 if __name__ == "__main__":
     init_db()
     RESUMES_DIR.mkdir(exist_ok=True)
+    _retry_stale_jobs()
     app.run(debug=False, port=int(os.environ.get("FLASK_PORT", 5001)))
