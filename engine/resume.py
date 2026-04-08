@@ -351,9 +351,30 @@ def export_pdf(docx_path: Path, pdf_path: Path):
     HTML(string=result.value).write_pdf(str(pdf_path))
 
 
+def _call_provider(name: str, fn, logger) -> str | None:
+    """Try a single LLM provider with up to 3 retries and exponential backoff.
+    Returns the response text on success, or None on failure."""
+    import time
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception as e:
+            wait = 2 ** attempt  # 1s, 2s, 4s
+            is_last = attempt == max_retries - 1
+            if is_last:
+                logger.warning("%s failed after %d attempts: %s", name, max_retries, e)
+                return None
+            logger.info("%s attempt %d failed, retrying in %ds: %s",
+                        name, attempt + 1, wait, e)
+            time.sleep(wait)
+    return None
+
+
 def _call_llm(prompt: str, max_tokens: int = 2048) -> str:
     """Call whichever LLM API key is configured. Priority: Groq → Gemini → Anthropic.
-    Falls through to the next provider if one fails."""
+    Each provider is retried up to 3 times with exponential backoff before
+    falling through to the next."""
     import logging
     _logger = logging.getLogger("jobbot.resume")
 
@@ -364,7 +385,7 @@ def _call_llm(prompt: str, max_tokens: int = 2048) -> str:
     errors = []
 
     if groq_key:
-        try:
+        def _groq():
             from groq import Groq
             client = Groq(api_key=groq_key)
             message = client.chat.completions.create(
@@ -373,24 +394,28 @@ def _call_llm(prompt: str, max_tokens: int = 2048) -> str:
                 messages=[{"role": "user", "content": prompt}]
             )
             return message.choices[0].message.content
-        except Exception as e:
-            _logger.warning("Groq API failed, trying next provider: %s", e)
-            errors.append(f"Groq: {e}")
+
+        result = _call_provider("Groq", _groq, _logger)
+        if result is not None:
+            return result
+        errors.append("Groq")
 
     if gemini_key:
-        try:
+        def _gemini():
             from google import genai
             client = genai.Client(api_key=gemini_key)
             response = client.models.generate_content(
                 model="gemini-2.0-flash", contents=prompt
             )
             return response.text
-        except Exception as e:
-            _logger.warning("Gemini API failed, trying next provider: %s", e)
-            errors.append(f"Gemini: {e}")
+
+        result = _call_provider("Gemini", _gemini, _logger)
+        if result is not None:
+            return result
+        errors.append("Gemini")
 
     if anthropic_key:
-        try:
+        def _anthropic():
             import anthropic
             client = anthropic.Anthropic(api_key=anthropic_key)
             message = client.messages.create(
@@ -399,12 +424,14 @@ def _call_llm(prompt: str, max_tokens: int = 2048) -> str:
                 messages=[{"role": "user", "content": prompt}]
             )
             return message.content[0].text
-        except Exception as e:
-            _logger.warning("Anthropic API failed: %s", e)
-            errors.append(f"Anthropic: {e}")
+
+        result = _call_provider("Anthropic", _anthropic, _logger)
+        if result is not None:
+            return result
+        errors.append("Anthropic")
 
     if errors:
-        raise RuntimeError(f"All LLM providers failed: {'; '.join(errors)}")
+        raise RuntimeError(f"All LLM providers failed after retries: {', '.join(errors)}")
     raise RuntimeError("No API key set — add a Groq, Gemini, or Anthropic key in Settings")
 
 
