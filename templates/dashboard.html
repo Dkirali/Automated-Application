@@ -353,6 +353,8 @@
     });
   }
 
+  let lastPendingCount = {{ pending_jobs | length }};
+
   function pollStatus() {
     fetch('/status')
       .then(r => r.json())
@@ -360,6 +362,12 @@
         const running = data.status && data.status !== 'Idle';
         applyRunningState(running);
         if (running) statusText.textContent = data.status;
+
+        // Reload only when new jobs appear (avoids constant flicker)
+        if (data.pending_count !== undefined && data.pending_count !== lastPendingCount) {
+          lastPendingCount = data.pending_count;
+          location.reload();
+        }
       })
       .catch(() => {});
   }
@@ -405,11 +413,8 @@
     updateBulkBar();
   }
 
-  // Auto-reload the page every 5 s while a campaign is running so newly
-  // inserted/tailored jobs appear in the Pending list without a manual refresh.
-  {% if stats.status == 'running' %}
-  setTimeout(() => location.reload(), 5000);
-  {% endif %}
+  // Smart reload: pollStatus() already detects new jobs and reloads when
+  // pending count changes — no need for a blind timer-based full page reload.
 </script>
 </body>
 </html>

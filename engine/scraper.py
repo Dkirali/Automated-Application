@@ -91,7 +91,7 @@ def parse_job_card(card) -> dict:
     return {"title": title, "company": company, "location": location, "url": url}
 
 
-def build_search_url(titles: list[str], filters: dict) -> str:
+def build_search_url(titles: list[str], filters: dict, start: int = 0) -> str:
     params = {
         "keywords": " OR ".join(titles),
         "location": filters.get("location_text", ""),
@@ -105,6 +105,8 @@ def build_search_url(titles: list[str], filters: dict) -> str:
     date_posted = filters.get("date_posted", "")
     if date_posted:
         params["f_TPR"] = date_posted
+    if start > 0:
+        params["start"] = start
     return f"{LINKEDIN_JOBS_URL}?{urlencode(params)}"
 
 
@@ -126,109 +128,134 @@ def get_job_description(page: Page) -> str:
     return ""
 
 
+def _load_cards_on_page(page, stop_event, update):
+    """Scroll the job list to lazy-load all cards on the current page."""
+    update("Loading job cards…")
+    for _ in range(8):
+        if stop_event.is_set():
+            break
+        count_before = page.locator(".job-card-container").count()
+        page.evaluate("""() => {
+            const card = document.querySelector('.job-card-container');
+            if (!card) return;
+            let el = card.parentElement;
+            while (el) {
+                if (el.scrollHeight > el.clientHeight + 50) {
+                    el.scrollBy(0, 1200);
+                    return;
+                }
+                el = el.parentElement;
+            }
+        }""")
+        page.wait_for_timeout(1500)
+        if page.locator(".job-card-container").count() == count_before:
+            break
+
+
+def _find_cards(page):
+    """Try multiple selectors to find job cards on the page."""
+    card_selectors = [
+        ".job-card-container",
+        "li.jobs-search-results__list-item",
+        ".base-search-card",
+        "li.scaffold-layout__list-item",
+    ]
+    for sel in card_selectors:
+        found = page.locator(sel).all()
+        if found:
+            return found, sel
+    return [], None
+
+
 def scrape_jobs(titles: list[str], filters: dict, seen_urls: set, stop_event,
                 status_callback=None, on_job=None) -> list[dict]:
     """
     Scrape LinkedIn for jobs matching titles/filters.
+    Paginates through all result pages (25 jobs per page).
     Returns list of pending job dicts. No submission happens here.
-    Delay is 3–5s between cards (scraping only, not submitting).
     """
     def update(msg):
         if status_callback:
             status_callback(msg)
 
     results = []
+    page_start = 0
+    PAGE_SIZE = 25
+    consecutive_empty = 0
 
     with sync_playwright() as p:
         context = get_browser_context(p)
         try:
             page = context.new_page()
-            search_url = build_search_url(titles, filters)
-            update(f"Opening LinkedIn: {search_url[:80]}…")
-            page.goto(search_url, wait_until="domcontentloaded")
-            page.wait_for_timeout(4000)
 
-            # Scroll the job list panel to trigger lazy-loading of all cards.
-            # LinkedIn only renders visible cards; we scroll the scrollable ancestor
-            # of the first card until no new cards appear.
-            update("Loading all job cards…")
-            for _ in range(8):
-                if stop_event.is_set():
-                    break
-                count_before = page.locator(".job-card-container").count()
-                page.evaluate("""() => {
-                    const card = document.querySelector('.job-card-container');
-                    if (!card) return;
-                    let el = card.parentElement;
-                    while (el) {
-                        if (el.scrollHeight > el.clientHeight + 50) {
-                            el.scrollBy(0, 1200);
-                            return;
-                        }
-                        el = el.parentElement;
-                    }
-                }""")
-                page.wait_for_timeout(1500)
-                if page.locator(".job-card-container").count() == count_before:
-                    break  # no new cards loaded
+            while not stop_event.is_set():
+                search_url = build_search_url(titles, filters, start=page_start)
+                page_num = (page_start // PAGE_SIZE) + 1
+                update(f"Opening LinkedIn page {page_num}: {search_url[:80]}…")
+                page.goto(search_url, wait_until="domcontentloaded")
+                page.wait_for_timeout(4000)
 
-            # Try multiple card container selectors
-            card_selectors = [
-                ".job-card-container",
-                "li.jobs-search-results__list-item",
-                ".base-search-card",
-                "li.scaffold-layout__list-item",
-            ]
-            cards = []
-            for sel in card_selectors:
-                found = page.locator(sel).all()
-                if found:
-                    cards = found
-                    update(f"Found {len(cards)} job cards using '{sel}'")
+                _load_cards_on_page(page, stop_event, update)
+
+                cards, sel = _find_cards(page)
+
+                if not cards:
+                    if page_start == 0:
+                        Path("debug_screenshot.png").unlink(missing_ok=True)
+                        page.screenshot(path="debug_screenshot.png")
+                        update("No job cards found — screenshot saved as debug_screenshot.png")
+                    else:
+                        update(f"No more jobs found after page {page_num}")
                     break
 
-            if not cards:
-                # Save a debug screenshot so we can see what LinkedIn is showing
-                Path("debug_screenshot.png").unlink(missing_ok=True)
-                page.screenshot(path="debug_screenshot.png")
-                update("No job cards found — screenshot saved as debug_screenshot.png")
-                return []
+                update(f"Page {page_num}: found {len(cards)} jobs (using '{sel}')")
 
-            update(f"Scanning {len(cards)} jobs…")
+                new_on_page = 0
+                for i, card in enumerate(cards):
+                    if stop_event.is_set():
+                        break
 
-            for i, card in enumerate(cards):
-                if stop_event.is_set():
-                    break
+                    try:
+                        job = parse_job_card(card)
+                    except Exception:
+                        continue
 
-                try:
-                    job = parse_job_card(card)
-                except Exception:
-                    continue
+                    if not job["url"] or job["url"] in seen_urls:
+                        continue
 
-                if not job["url"] or job["url"] in seen_urls:
-                    continue
+                    update(f"Reading job {page_start + i + 1}: {job.get('title','?')} at {job.get('company','?')}")
 
-                update(f"Reading job {i+1}/{len(cards)}: {job.get('title','?')} at {job.get('company','?')}")
+                    try:
+                        card.scroll_into_view_if_needed()
+                        card.click()
+                        page.wait_for_timeout(2000)
+                    except Exception:
+                        continue
 
-                try:
-                    card.scroll_into_view_if_needed()
-                    card.click()
-                    page.wait_for_timeout(2000)
-                except Exception:
-                    continue
+                    job["easy_apply"] = is_easy_apply(page)
+                    job["job_description"] = get_job_description(page)
 
-                job["easy_apply"] = is_easy_apply(page)
-                job["job_description"] = get_job_description(page)
+                    results.append(job)
+                    seen_urls.add(job["url"])
+                    new_on_page += 1
 
-                results.append(job)
-                seen_urls.add(job["url"])
+                    if on_job:
+                        on_job(job)
 
-                # Notify caller immediately so job can be persisted to DB
-                if on_job:
-                    on_job(job)
+                    page.wait_for_timeout(random.randint(3000, 5000))
 
-                # Short polite delay — scraping only, no submission happening
-                page.wait_for_timeout(random.randint(3000, 5000))
+                # If no new jobs on this page, we've likely exhausted results
+                if new_on_page == 0:
+                    consecutive_empty += 1
+                    if consecutive_empty >= 2:
+                        update("No new jobs found on consecutive pages — done")
+                        break
+                else:
+                    consecutive_empty = 0
+
+                # Move to next page
+                page_start += PAGE_SIZE
+                page.wait_for_timeout(random.randint(2000, 4000))
 
         finally:
             context.close()

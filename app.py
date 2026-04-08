@@ -244,7 +244,8 @@ def campaign_stop():
 
 @app.route("/status")
 def status():
-    return jsonify(status=_status)
+    pending = get_pending_jobs()
+    return jsonify(status=_status, pending_count=len(pending))
 
 
 @app.route("/linkedin-status")
@@ -317,6 +318,21 @@ def process_job(campaign_id: int, job: dict, stop_event) -> None:
     except Exception as e:
         logger.error("process_job failed for app_id=%s: %s", app_id, e, exc_info=True)
         update_application(app_id, "failed")
+
+
+def _wait_with_countdown(update_fn, stop_event, total_seconds: int, message_template: str):
+    """Wait with a live countdown in the status message.
+    message_template should contain {remaining} for the time string."""
+    elapsed = 0
+    while elapsed < total_seconds and not stop_event.is_set():
+        remaining = total_seconds - elapsed
+        if remaining >= 60:
+            time_str = f"{remaining // 60}m {remaining % 60}s"
+        else:
+            time_str = f"{remaining}s"
+        update_fn(message_template.format(remaining=time_str))
+        stop_event.wait(timeout=10)
+        elapsed += 10
 
 
 def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
@@ -402,13 +418,13 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
             break
 
         if not jobs_found:
-            update("No new jobs found — waiting 5 minutes before re-scraping…")
-            stop_event.wait(timeout=300)
+            _wait_with_countdown(update, stop_event, 300,
+                                 "No new jobs — re-scanning in {remaining}")
             continue
 
-        update(f"Processed {jobs_found} job(s) — review them in the dashboard")
         _alert = f"Added {jobs_found} job(s) – review them in the dashboard"
-        stop_event.wait(timeout=300)  # wait before next scrape pass
+        _wait_with_countdown(update, stop_event, 300,
+                             f"Processed {jobs_found} job(s) — next scan in {{remaining}}")
 
     _status = "Idle"
     campaign = get_active_campaign()
