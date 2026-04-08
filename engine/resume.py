@@ -1,10 +1,17 @@
 import os
 import re
 import shutil
+import threading
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Simple rate limiter: minimum seconds between consecutive LLM calls
+_LLM_MIN_INTERVAL = 2.0
+_llm_last_call = 0.0
+_llm_lock = threading.Lock()
 
 RESUMES_DIR = Path(__file__).parent.parent / "resumes"
 
@@ -354,7 +361,6 @@ def export_pdf(docx_path: Path, pdf_path: Path):
 def _call_provider(name: str, fn, logger) -> str | None:
     """Try a single LLM provider with up to 3 retries and exponential backoff.
     Returns the response text on success, or None on failure."""
-    import time
     max_retries = 3
     for attempt in range(max_retries):
         try:
@@ -374,9 +380,22 @@ def _call_provider(name: str, fn, logger) -> str | None:
 def _call_llm(prompt: str, max_tokens: int = 2048) -> str:
     """Call whichever LLM API key is configured. Priority: Groq → Gemini → Anthropic.
     Each provider is retried up to 3 times with exponential backoff before
-    falling through to the next."""
+    falling through to the next.
+    Rate-limited to at most one call every _LLM_MIN_INTERVAL seconds."""
     import logging
     _logger = logging.getLogger("jobbot.resume")
+
+    # Enforce minimum interval between LLM calls to avoid quota exhaustion
+    global _llm_last_call
+    wait = 0.0
+    with _llm_lock:
+        elapsed = time.time() - _llm_last_call
+        if elapsed < _LLM_MIN_INTERVAL:
+            wait = _LLM_MIN_INTERVAL - elapsed
+        _llm_last_call = time.time() + wait  # reserve our slot
+    if wait > 0:
+        _logger.debug("Rate limiter: waiting %.1fs before next LLM call", wait)
+        time.sleep(wait)
 
     groq_key = os.environ.get("GROQ_API_KEY")
     gemini_key = os.environ.get("GEMINI_API_KEY")
