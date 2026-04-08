@@ -367,13 +367,15 @@ def _call_llm(prompt: str, max_tokens: int = 2048) -> str:
 
     # Enforce minimum interval between LLM calls to avoid quota exhaustion
     global _llm_last_call
+    wait = 0.0
     with _llm_lock:
         elapsed = time.time() - _llm_last_call
         if elapsed < _LLM_MIN_INTERVAL:
             wait = _LLM_MIN_INTERVAL - elapsed
-            _logger.debug("Rate limiter: waiting %.1fs before next LLM call", wait)
-            time.sleep(wait)
-        _llm_last_call = time.time()
+        _llm_last_call = time.time() + wait  # reserve our slot
+    if wait > 0:
+        _logger.debug("Rate limiter: waiting %.1fs before next LLM call", wait)
+        time.sleep(wait)
 
     groq_key = os.environ.get("GROQ_API_KEY")
     gemini_key = os.environ.get("GEMINI_API_KEY")
