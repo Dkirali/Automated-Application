@@ -211,11 +211,19 @@
           {% if job.resume_path %}
             <a href="/download/{{ job.id }}" class="panel-action-btn">↓ Download</a>
           {% endif %}
-          <form method="POST" action="/retailor/{{ job.id }}" class="form-inline">
+          <form method="POST" action="/retailor/{{ job.id }}" class="form-inline retailor-form">
+            <select name="model" class="model-select" title="Choose LLM model">
+              {% for key, label in available_models.items() %}
+                <option value="{{ key }}">{{ label }}</option>
+              {% endfor %}
+            </select>
             <button type="submit" class="panel-action-btn panel-action-btn--secondary" title="Re-generate tailored resume">↺ Re-tailor</button>
           </form>
         </div>
       </div>
+      {% if job.model_used %}
+        <div class="model-used-badge">🤖 {{ job.model_used }}</div>
+      {% endif %}
       <div class="review-panel-body" id="resume-panel-body">
         <div id="resume-skeleton">
           <div class="skeleton-line" style="width:55%"></div>

@@ -29,6 +29,7 @@ def _migrate(conn):
         "ALTER TABLE applications ADD COLUMN original_ats_score INTEGER",
         "ALTER TABLE applications ADD COLUMN keywords TEXT",
         "ALTER TABLE applications ADD COLUMN jd_summary TEXT",
+        "ALTER TABLE applications ADD COLUMN model_used TEXT",
     ]
     for sql in migrations:
         try:
@@ -192,7 +193,7 @@ def get_seen_urls() -> set:
 def update_application(app_id: int, status: str, ats_score: int = None,
                        resume_path: str = None, fit_summary: str = None,
                        original_ats_score: int = None, keywords: str = None,
-                       jd_summary: str = None):
+                       jd_summary: str = None, model_used: str = None):
     with get_conn() as conn:
         conn.execute(
             "UPDATE applications SET status=?, "
@@ -201,10 +202,11 @@ def update_application(app_id: int, status: str, ats_score: int = None,
             "fit_summary=COALESCE(?,fit_summary), "
             "original_ats_score=COALESCE(?,original_ats_score), "
             "keywords=COALESCE(?,keywords), "
-            "jd_summary=COALESCE(?,jd_summary) "
+            "jd_summary=COALESCE(?,jd_summary), "
+            "model_used=COALESCE(?,model_used) "
             "WHERE id=?",
             (status, ats_score, resume_path, fit_summary,
-             original_ats_score, keywords, jd_summary, app_id)
+             original_ats_score, keywords, jd_summary, model_used, app_id)
         )
 
 

@@ -13,7 +13,7 @@ from db.database import (
     get_application, get_all_campaigns
 )
 
-from engine.resume import tailor_resume, generate_fit_summary
+from engine.resume import tailor_resume, generate_fit_summary, AVAILABLE_MODELS, get_last_model_used
 from engine.submitter import submit_application
 
 load_dotenv()
@@ -136,7 +136,8 @@ def dashboard():
                            campaigns=campaigns,
                            stats=stats,
                            alert=_alert,
-                           resume_name=resume_name)
+                           resume_name=resume_name,
+                           active_model=get_last_model_used())
 
 
 @app.route("/settings", methods=["GET", "POST"])
@@ -148,8 +149,8 @@ def settings():
         email = request.form.get("email", "").strip()
         phone = request.form.get("phone", "").strip()
         api_key = request.form.get("api_key", "").strip()
-        gemini_key = request.form.get("gemini_key", "").strip()
         groq_key = request.form.get("groq_key", "").strip()
+        openrouter_key = request.form.get("openrouter_key", "").strip()
         resume_file = request.files.get("resume")
 
         if not all([name, email, phone]):
@@ -158,7 +159,7 @@ def settings():
             set_config("name", name)
             set_config("email", email)
             set_config("phone", phone)
-            if api_key or gemini_key or groq_key:
+            if api_key or groq_key or openrouter_key:
                 from dotenv import dotenv_values
                 env_path = Path(".env")
                 existing = dict(dotenv_values(env_path)) if env_path.exists() else {}
@@ -168,9 +169,9 @@ def settings():
                 if groq_key:
                     existing["GROQ_API_KEY"] = groq_key
                     os.environ["GROQ_API_KEY"] = groq_key
-                if gemini_key:
-                    existing["GEMINI_API_KEY"] = gemini_key
-                    os.environ["GEMINI_API_KEY"] = gemini_key
+                if openrouter_key:
+                    existing["OPENROUTER_API_KEY"] = openrouter_key
+                    os.environ["OPENROUTER_API_KEY"] = openrouter_key
                 env_path.write_text("\n".join(f"{k}={v}" for k, v in existing.items()) + "\n")
             if resume_file and resume_file.filename:
                 new_path, err = _save_resume(resume_file)
@@ -401,8 +402,9 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
                     original_ats_score=tailor.get("original_ats_score"),
                     keywords=tailor.get("keywords_str"),
                     resume_path=tailor["docx_path"],
+                    model_used=tailor.get("model_used"),
                 )
-                logger.info("Tailored app_id=%s (%s at %s)", app_id, title, company)
+                logger.info("Tailored app_id=%s (%s at %s) model=%s", app_id, title, company, tailor.get("model_used"))
             except Exception as e:
                 jobs_failed += 1
                 logger.error("Tailoring failed for app_id=%s (%s at %s): %s",
@@ -410,17 +412,20 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
                 update_application(app_id, "failed")
                 return
 
-            # Fit summary is optional — don't fail the job if this call errors
-            try:
-                fit = generate_fit_summary(jd, master_path)
-                update_application(
-                    app_id, "reviewed",
-                    fit_summary=fit.get("raw", ""),
-                    jd_summary=fit.get("jd_summary", ""),
-                )
-            except Exception as e:
-                logger.warning("Fit summary failed for app_id=%s (non-fatal): %s",
-                               app_id, e)
+            # Fit summary is optional — run in a separate thread so it doesn't
+            # block the next job's tailoring or exhaust LLM quota
+            def _bg_fit(aid, desc, mpath):
+                try:
+                    fit = generate_fit_summary(desc, mpath)
+                    update_application(
+                        aid, "reviewed",
+                        fit_summary=fit.get("raw", ""),
+                        jd_summary=fit.get("jd_summary", ""),
+                    )
+                except Exception as exc:
+                    logger.warning("Fit summary failed for app_id=%s (non-fatal): %s",
+                                   aid, exc)
+            threading.Thread(target=_bg_fit, args=(app_id, jd, master_path), daemon=True).start()
 
         try:
             scrape_jobs(titles, filters, seen_urls, stop_event,
@@ -468,7 +473,8 @@ def review_job(app_id):
         "jd_keywords": job.get("keywords"),
     }
 
-    return render_template("review.html", job=job, fit=fit)
+    return render_template("review.html", job=job, fit=fit,
+                           available_models=AVAILABLE_MODELS)
 
 
 @app.route("/apply/<int:app_id>", methods=["POST"])
@@ -519,6 +525,8 @@ def retailor_job(app_id):
     if not job:
         return redirect(url_for("dashboard"))
 
+    preferred_model = request.form.get("model", "auto")
+
     # Preserve existing keywords so original ATS score stays stable on re-tailor
     stored_keywords_str = job.get("keywords") or ""
     stored_keywords = [k.strip() for k in stored_keywords_str.split(",") if k.strip()]
@@ -530,26 +538,28 @@ def retailor_job(app_id):
         conn.execute(
             "UPDATE applications SET resume_path=NULL, ats_score=NULL, "
             "original_ats_score=NULL, fit_summary=NULL, "
-            "jd_summary=NULL WHERE id=?",
+            "jd_summary=NULL, model_used=NULL WHERE id=?",
             (app_id,)
         )
 
-    def _retailor(app_id, jd, existing_kw):
+    def _retailor(app_id, jd, existing_kw, model):
         master_path = get_config("master_resume_path")
         if not master_path or not jd:
             logger.error("retailor: no master resume or JD for app_id=%s", app_id)
             return
         try:
             tailor = tailor_resume(app_id, jd, master_path,
-                                  existing_keywords=existing_kw or None)
+                                  existing_keywords=existing_kw or None,
+                                  preferred_model=model)
             update_application(
                 app_id, "reviewed",
                 ats_score=tailor["ats_score"],
                 original_ats_score=tailor.get("original_ats_score"),
                 keywords=tailor.get("keywords_str"),
                 resume_path=tailor["docx_path"],
+                model_used=tailor.get("model_used"),
             )
-            logger.info("Re-tailored app_id=%s", app_id)
+            logger.info("Re-tailored app_id=%s with model=%s", app_id, tailor.get("model_used"))
         except Exception as e:
             logger.error("Re-tailor failed for app_id=%s: %s", app_id, e, exc_info=True)
             update_application(app_id, "failed")
@@ -565,7 +575,7 @@ def retailor_job(app_id):
         except Exception as e:
             logger.warning("Fit summary failed for app_id=%s (non-fatal): %s", app_id, e)
 
-    threading.Thread(target=_retailor, args=(app_id, job.get("job_description", ""), stored_keywords), daemon=True).start()
+    threading.Thread(target=_retailor, args=(app_id, job.get("job_description", ""), stored_keywords, preferred_model), daemon=True).start()
     return redirect(url_for("review_job", app_id=app_id))
 
 

@@ -23,6 +23,7 @@
           <button onclick="connectLinkedIn()" id="connect-btn" class="li-pill-btn">Connect</button>
         {% endif %}
       </span>
+      <span class="model-pill" title="Active LLM model">🤖 {{ active_model }}</span>
       <a href="/settings" class="icon-link">⚙ Settings</a>
     </div>
   </div>
@@ -188,6 +189,9 @@
                 </div>
               {% elif job.status == 'reviewed' and not job.ats_score %}
                 <div class="app-card-verdict" style="color:var(--clr-success);font-size:11px;">✓ Ready for review</div>
+              {% endif %}
+              {% if job.model_used %}
+                <div class="app-card-model">🤖 {{ job.model_used }}</div>
               {% endif %}
             </div>
             <div class="app-card-right">

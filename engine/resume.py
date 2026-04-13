@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Simple rate limiter: minimum seconds between consecutive LLM calls
-_LLM_MIN_INTERVAL = 2.0
+_LLM_MIN_INTERVAL = 4.0  # seconds between LLM calls — prevents quota exhaustion on free tiers
 _llm_last_call = 0.0
 _llm_lock = threading.Lock()
 
@@ -360,13 +360,20 @@ def export_pdf(docx_path: Path, pdf_path: Path):
 
 def _call_provider(name: str, fn, logger) -> str | None:
     """Try a single LLM provider with up to 3 retries and exponential backoff.
+    Rate-limit (429/quota) errors skip immediately to the next provider.
     Returns the response text on success, or None on failure."""
     max_retries = 3
     for attempt in range(max_retries):
         try:
             return fn()
         except Exception as e:
-            wait = 2 ** attempt  # 1s, 2s, 4s
+            err_str = str(e).lower()
+            is_rate_limit = "429" in err_str or "rate" in err_str or "quota" in err_str or "resource_exhausted" in err_str
+            if is_rate_limit:
+                # Don't waste time retrying — skip to next provider immediately
+                logger.info("%s rate-limited, skipping to next provider: %s", name, e)
+                return None
+            wait = 2 * (2 ** attempt)  # 2s, 4s, 8s
             is_last = attempt == max_retries - 1
             if is_last:
                 logger.warning("%s failed after %d attempts: %s", name, max_retries, e)
@@ -377,10 +384,36 @@ def _call_provider(name: str, fn, logger) -> str | None:
     return None
 
 
-def _call_llm(prompt: str, max_tokens: int = 2048) -> str:
-    """Call whichever LLM API key is configured. Priority: Groq → Gemini → Anthropic.
-    Each provider is retried up to 3 times with exponential backoff before
-    falling through to the next.
+# All available models the user can pick from
+AVAILABLE_MODELS = {
+    "auto":                         "Auto (best available)",
+    "groq/llama-3.3-70b":          "Groq — Llama 3.3 70B",
+    "openrouter/gpt-oss-120b":     "OpenRouter — GPT-OSS 120B",
+    "openrouter/minimax-m2.5":     "OpenRouter — MiniMax M2.5",
+    "openrouter/free":             "OpenRouter — Best Free",
+    "anthropic/claude-sonnet":     "Anthropic — Claude Sonnet",
+}
+
+# Last model that successfully produced a result (module-level for display)
+_last_model_used = "—"
+_last_model_lock = threading.Lock()
+
+
+def get_last_model_used() -> str:
+    with _last_model_lock:
+        return _last_model_used
+
+
+def _set_last_model(name: str):
+    global _last_model_used
+    with _last_model_lock:
+        _last_model_used = name
+
+
+def _call_llm(prompt: str, max_tokens: int = 2048, preferred_model: str = "auto") -> str:
+    """Call an LLM provider.
+    If preferred_model is set (not 'auto'), call only that provider.
+    Otherwise cascade: Groq → OpenRouter (3 models) → Anthropic.
     Rate-limited to at most one call every _LLM_MIN_INTERVAL seconds."""
     import logging
     _logger = logging.getLogger("jobbot.resume")
@@ -398,64 +431,113 @@ def _call_llm(prompt: str, max_tokens: int = 2048) -> str:
         time.sleep(wait)
 
     groq_key = os.environ.get("GROQ_API_KEY")
-    gemini_key = os.environ.get("GEMINI_API_KEY")
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
 
     errors = []
 
-    if groq_key:
-        def _groq():
-            from groq import Groq
-            client = Groq(api_key=groq_key)
-            message = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return message.choices[0].message.content
+    # ── Provider helpers ─────────────────────────────────────────────────
+    def _groq():
+        from groq import Groq
+        client = Groq(api_key=groq_key)
+        message = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return message.choices[0].message.content
 
-        result = _call_provider("Groq", _groq, _logger)
+    def _or_call(model_id):
+        import requests as _req
+        resp = _req.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {openrouter_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "http://localhost:5001",
+                "X-Title": "JobBot",
+            },
+            json={
+                "model": model_id,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=90,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        if not content:
+            raise RuntimeError(f"Empty response from {model_id}")
+        return content
+
+    def _anthropic():
+        import anthropic
+        client = anthropic.Anthropic(api_key=anthropic_key)
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return message.content[0].text
+
+    # ── Specific model requested ─────────────────────────────────────────
+    if preferred_model and preferred_model != "auto":
+        _MODEL_MAP = {
+            "groq/llama-3.3-70b":      ("Groq/Llama-3.3-70B", _groq, groq_key),
+            "openrouter/gpt-oss-120b":  ("OpenRouter/gpt-oss-120b:free",  lambda: _or_call("openai/gpt-oss-120b:free"), openrouter_key),
+            "openrouter/minimax-m2.5":  ("OpenRouter/minimax-m2.5:free",  lambda: _or_call("minimax/minimax-m2.5:free"), openrouter_key),
+            "openrouter/free":          ("OpenRouter/free",               lambda: _or_call("openrouter/free"), openrouter_key),
+            "anthropic/claude-sonnet":  ("Anthropic/Claude-Sonnet",       _anthropic, anthropic_key),
+        }
+        entry = _MODEL_MAP.get(preferred_model)
+        if entry:
+            label, fn, key_present = entry
+            if key_present:
+                result = _call_provider(label, fn, _logger)
+                if result is not None:
+                    _set_last_model(label)
+                    return result
+            raise RuntimeError(f"Model {preferred_model} failed — no API key or provider error")
+        # Unknown model, fall through to auto
+        _logger.warning("Unknown preferred_model=%s, falling back to auto", preferred_model)
+
+    # ── Auto cascade ─────────────────────────────────────────────────────
+    if groq_key:
+        result = _call_provider("Groq/Llama-3.3-70B", _groq, _logger)
         if result is not None:
+            _set_last_model("Groq/Llama-3.3-70B")
             return result
         errors.append("Groq")
 
-    if gemini_key:
-        def _gemini():
-            from google import genai
-            client = genai.Client(api_key=gemini_key)
-            response = client.models.generate_content(
-                model="gemini-2.0-flash", contents=prompt
-            )
-            return response.text
-
-        result = _call_provider("Gemini", _gemini, _logger)
-        if result is not None:
-            return result
-        errors.append("Gemini")
+    if openrouter_key:
+        _OR_MODELS = [
+            ("openai/gpt-oss-120b:free",  "OpenRouter/gpt-oss-120b:free"),
+            ("minimax/minimax-m2.5:free",  "OpenRouter/minimax-m2.5:free"),
+            ("openrouter/free",            "OpenRouter/free"),
+        ]
+        for or_id, or_label in _OR_MODELS:
+            result = _call_provider(or_label, lambda m=or_id: _or_call(m), _logger)
+            if result is not None:
+                _set_last_model(or_label)
+                return result
+            errors.append(or_label)
 
     if anthropic_key:
-        def _anthropic():
-            import anthropic
-            client = anthropic.Anthropic(api_key=anthropic_key)
-            message = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return message.content[0].text
-
-        result = _call_provider("Anthropic", _anthropic, _logger)
+        result = _call_provider("Anthropic/Claude-Sonnet", _anthropic, _logger)
         if result is not None:
+            _set_last_model("Anthropic/Claude-Sonnet")
             return result
         errors.append("Anthropic")
 
     if errors:
-        raise RuntimeError(f"All LLM providers failed after retries: {', '.join(errors)}")
-    raise RuntimeError("No API key set — add a Groq, Gemini, or Anthropic key in Settings")
+        raise RuntimeError(f"All LLM providers failed: {', '.join(errors)}")
+    raise RuntimeError("No API key set — add a Groq, OpenRouter, or Anthropic key in Settings")
 
 
 def tailor_resume(job_id: int, job_description: str, master_resume_path: str,
-                  existing_keywords: list[str] | None = None) -> dict:
+                  existing_keywords: list[str] | None = None,
+                  preferred_model: str = "auto") -> dict:
     master_path = Path(master_resume_path)
     if not master_path.exists():
         raise FileNotFoundError(f"Master resume not found: {master_resume_path}")
@@ -465,7 +547,7 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str,
         response_text = _call_llm(TAILOR_PROMPT.format(
             job_description=job_description,
             resume_text=resume_text,
-        ), max_tokens=2048)
+        ), max_tokens=2048, preferred_model=preferred_model)
     except Exception as e:
         raise RuntimeError(f"LLM API error: {e}") from e
 
@@ -505,6 +587,7 @@ def tailor_resume(job_id: int, job_description: str, master_resume_path: str,
         "tailored_text": tailored_text,
         "docx_path": str(docx_path),
         "pdf_path": str(pdf_path) if pdf_path else None,
+        "model_used": get_last_model_used(),
     }
 
 

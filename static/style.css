@@ -1129,6 +1129,59 @@ a:hover { text-decoration: underline; }
   box-shadow: var(--glow-danger);
 }
 
+/* ─── Model Selector & Badges ────────────────────────────────────────────── */
+.model-select {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--clr-border);
+  background: var(--clr-surface2);
+  color: var(--clr-text);
+  cursor: pointer;
+  outline: none;
+  transition: border-color .15s ease;
+}
+.model-select:hover, .model-select:focus {
+  border-color: var(--clr-primary);
+}
+.model-select option {
+  background: var(--clr-surface);
+  color: var(--clr-text);
+}
+.retailor-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-used-badge {
+  font-family: var(--font-hud);
+  font-size: 10px;
+  color: var(--clr-text-muted);
+  padding: 2px 12px;
+  border-bottom: 1px solid var(--clr-border);
+  background: var(--clr-surface2);
+}
+
+.model-pill {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  color: var(--clr-text-muted);
+  background: var(--clr-surface2);
+  border: 1px solid var(--clr-border);
+  border-radius: 12px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.app-card-model {
+  font-family: var(--font-hud);
+  font-size: 10px;
+  color: var(--clr-text-subtle);
+  margin-top: 2px;
+}
+
 /* ─── Review Page ─────────────────────────────────────────────────────────── */
 .back-link {
   font-size: 13px;
