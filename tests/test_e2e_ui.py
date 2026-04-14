@@ -87,11 +87,14 @@ class TestDashboard:
         has_content = ats_dual.count() > 0 or ats_single.count() > 0 or reviewed_badges.count() > 0
         assert has_content, "Expected ATS scores or review badges on pending cards"
 
-    def test_07_pending_job_shows_tailoring_queued(self, page):
-        """Pending (not yet tailored) jobs show 'tailoring queued' message."""
+    def test_07_pending_job_shows_not_tailored(self, page):
+        """Pending (not yet tailored) jobs show an 'untailored' badge or tailor button."""
         page.goto(BASE_URL)
-        queued = page.locator(".app-card-verdict", has_text="tailoring queued")
-        assert queued.count() >= 1, "Expected at least one job showing 'tailoring queued'"
+        # Jobs without a resume show either an untailored badge or a tailor button
+        untailored = page.locator(".untailored-badge")
+        tailor_btn = page.locator(".tailor-btn")
+        has_indicator = untailored.count() >= 1 or tailor_btn.count() >= 1
+        assert has_indicator, "Expected at least one pending job with untailored badge or tailor button"
 
     def test_08_fit_badge_on_reviewed_cards(self, page):
         """Reviewed cards with fit scores show fit badges or verdict text."""

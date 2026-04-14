@@ -23,7 +23,9 @@
           <button onclick="connectLinkedIn()" id="connect-btn" class="li-pill-btn">Connect</button>
         {% endif %}
       </span>
-      <span class="model-pill" title="Active LLM model">🤖 {{ active_model }}</span>
+      {% if active_model and active_model != '—' %}
+        <span class="model-pill" title="Last used LLM model">🤖 {{ active_model }}</span>
+      {% endif %}
       <a href="/settings" class="icon-link">⚙ Settings</a>
     </div>
   </div>
@@ -136,6 +138,40 @@
         </div>
       </div>
 
+      <!-- Model Selector -->
+      <div class="model-select-row">
+        <div class="form-label">AI Model for Tailoring</div>
+        <div class="model-options" id="modelOptions">
+          {% set model_soft_limits = {
+            'groq/llama-3.3-70b': 30,
+            'openrouter/gpt-oss-120b': 100,
+            'openrouter/minimax-m2.5': 100,
+            'openrouter/free': 50,
+            'anthropic/claude-sonnet': 20
+          } %}
+          {% for key, label in available_models.items() %}
+            {% set is_configured = (key == 'auto') or (key in configured_models) %}
+            <label class="model-option {% if not is_configured %}not-configured{% endif %}"
+                   data-model="{{ key }}">
+              <input type="radio" name="preferred_model" value="{{ key }}"
+                     {% if key == 'auto' %}checked{% endif %}
+                     {% if not is_configured %}disabled{% endif %}>
+              <span class="model-option-name">{{ label }}</span>
+              {% if key != 'auto' and is_configured %}
+                <div class="model-option-usage">
+                  <span class="model-usage-bar">
+                    <span class="usage-fill" id="usage-fill-{{ key | replace('/', '-') }}"></span>
+                  </span>
+                  <span class="usage-count" id="usage-count-{{ key | replace('/', '-') }}">— calls</span>
+                </div>
+              {% elif key == 'auto' %}
+                <span style="font-size:9px;color:var(--clr-text-muted);margin-top:2px;">Uses best available</span>
+              {% endif %}
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+
       <div class="campaign-actions">
         <button type="submit" class="btn-start">▶ Start</button>
         <span class="campaign-hint">Max 20 applications per session</span>
@@ -151,25 +187,44 @@
 
   <!-- Pending Review -->
   {% if pending_jobs %}
-    {% set stuck_count = pending_jobs | selectattr('status', 'equalto', 'pending') | list | length %}
+    {% set stuck_count = pending_jobs | selectattr('status', 'equalto', 'pending') | selectattr('resume_path', 'none') | list | length %}
     <div class="section-title section-title--pending">
       Pending Review
       <span class="section-badge">{{ pending_jobs | length }}</span>
-      {% if stuck_count > 0 %}
-        <form method="POST" action="/retry-pending" style="display:inline;margin-left:auto;">
-          <button type="submit" class="btn-retry" title="Re-run resume tailoring for {{ stuck_count }} stuck job(s)">↻ Retry {{ stuck_count }} pending</button>
-        </form>
-      {% endif %}
     </div>
+
+    <!-- Sort / Filter Controls -->
+    <div class="jobs-controls" id="jobsControls">
+      <div class="ctrl-group">
+        <span class="control-label">Sort</span>
+        <button class="sort-btn active" data-sort="fit-desc" onclick="sortJobs('fit-desc', this)">Fit ↓</button>
+        <button class="sort-btn" data-sort="fit-asc" onclick="sortJobs('fit-asc', this)">Fit ↑</button>
+        <button class="sort-btn" data-sort="newest" onclick="sortJobs('newest', this)">Newest</button>
+        <button class="sort-btn" data-sort="model" onclick="sortJobs('model', this)">AI Model</button>
+      </div>
+      <div class="ctrl-group">
+        <span class="control-label">Filter</span>
+        <button class="filter-btn active" data-filter="all" onclick="filterJobs('all', this)">All</button>
+        <button class="filter-btn" data-filter="tailored" onclick="filterJobs('tailored', this)">Tailored</button>
+        <button class="filter-btn" data-filter="untailored" onclick="filterJobs('untailored', this)">Not Tailored</button>
+      </div>
+    </div>
+
     <form id="bulk-form" method="POST" action="/bulk-discard">
-    <div class="card-list pending-list">
+    <div class="card-list pending-list" id="pending-list">
       {% for job in pending_jobs %}
         {% set orig  = job.original_ats_score or 0 %}
         {% set tail  = job.ats_score or 0 %}
         {% set tail_class = 'high' if tail >= 70 else ('medium' if tail >= 40 else 'low') %}
         {% set fs = job.fit_score or 0 %}
         {% set fs_class = 'high' if fs >= 70 else ('medium' if fs >= 40 else 'low') %}
-        <div class="app-card app-card--pending">
+        {% set is_tailored = job.resume_path is not none and job.resume_path %}
+        <div class="app-card app-card--pending"
+             data-fit="{{ fs }}"
+             data-model="{{ job.model_used or '' }}"
+             data-tailored="{{ '1' if is_tailored else '0' }}"
+             data-created="{{ job.created_at or '' }}"
+             data-index="{{ loop.index0 }}">
           <label class="job-checkbox-wrap" onclick="event.stopPropagation();">
             <input type="checkbox" name="job_ids" value="{{ job.id }}" class="job-checkbox" onchange="updateBulkBar()">
             <span class="job-checkbox-box"></span>
@@ -178,21 +233,31 @@
             <div class="app-card-body">
               <div class="app-card-title">{{ job.title }}</div>
               <div class="app-card-meta">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
-              {% if job.status == 'pending' %}
-                <div class="app-card-verdict" style="color:var(--clr-warning);font-size:11px;">⏳ Pending — tailoring queued</div>
-              {% elif fs %}
+
+              <!-- Fit score (clickable badge) -->
+              {% if fs %}
                 <div class="app-card-fit">
-                  <span class="fit-badge fit-badge--{{ fs_class }}">{{ fs }}% fit</span>
+                  <span class="fit-badge fit-badge--{{ fs_class }}"
+                        data-fit-id="{{ job.id }}"
+                        onclick="event.preventDefault(); event.stopPropagation(); openFitModal({{ job.id }})">
+                    {{ fs }}% fit
+                  </span>
                   {% if job.verdict %}
                     <span class="fit-verdict-snippet">{{ job.verdict | truncate(70) }}</span>
                   {% endif %}
                 </div>
-              {% elif job.status == 'reviewed' and not job.ats_score %}
-                <div class="app-card-verdict" style="color:var(--clr-success);font-size:11px;">✓ Ready for review</div>
+              {% else %}
+                <div class="app-card-verdict" style="color:var(--clr-text-muted);font-size:11px;">⏳ Analyzing fit…</div>
               {% endif %}
-              {% if job.model_used %}
-                <div class="app-card-model">🤖 {{ job.model_used }}</div>
-              {% endif %}
+
+              <!-- Tailoring status -->
+              <div class="app-card-tailor-status" style="margin-top:6px;">
+                {% if is_tailored %}
+                  <span class="tailored-model-badge">✓ {{ job.model_used }}</span>
+                {% else %}
+                  <span class="untailored-badge">Not tailored</span>
+                {% endif %}
+              </div>
             </div>
             <div class="app-card-right">
               {% if tail %}
@@ -213,22 +278,54 @@
                     <span class="ats-dual-pct ats-dual-pct--{{ tail_class }}">{{ tail }}%</span>
                   </div>
                 </div>
-              {% elif orig %}
-                <div class="ats-mini">
-                  <span class="ats-mini-label">ATS {{ orig }}%</span>
-                  <div class="ats-bar-wrap">
-                    {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
-                    <div class="ats-bar-fill {{ orig_class }}" style="width:{{ orig }}%"></div>
-                  </div>
-                </div>
               {% endif %}
               <span class="badge badge-pending">Review →</span>
             </div>
           </a>
+          <!-- Tailor button (outside the anchor) -->
+          {% if not is_tailored %}
+            <div style="padding: 0 12px 10px;" onclick="event.stopPropagation();">
+              <form method="POST" action="/retailor/{{ job.id }}">
+                <select name="model" class="model-select-inline" style="font-size:9px;padding:2px 4px;">
+                  {% for key, label in available_models.items() %}
+                    <option value="{{ key }}">{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="tailor-btn">⚡ Tailor Resume</button>
+              </form>
+            </div>
+          {% endif %}
         </div>
+
+        {# Embed fit data as JSON for the modal — one per job #}
+        <script type="application/json" id="fit-data-{{ job.id }}">
+          {
+            "fit_score": {{ fs }},
+            "title": {{ job.title | tojson }},
+            "company": {{ job.company | tojson }},
+            "strengths": {{ job.fit_strengths | default([]) | tojson }},
+            "gaps": {{ job.fit_gaps | default([]) | tojson }},
+            "verdict": {{ job.verdict | default('') | tojson }},
+            "keywords": {{ job.keywords | default('') | tojson }}
+          }
+        </script>
       {% endfor %}
     </div>
-    <!-- Bulk action bar — hidden until checkboxes are selected -->
+
+    <!-- Pagination for pending jobs -->
+    <div class="pagination-bar" id="pending-pagination">
+      <span class="page-size-label">Show</span>
+      <button class="page-size-btn active" data-size="20" onclick="setPendingPageSize(20, this)">20</button>
+      <button class="page-size-btn" data-size="40" onclick="setPendingPageSize(40, this)">40</button>
+      <button class="page-size-btn" data-size="60" onclick="setPendingPageSize(60, this)">60</button>
+      <div class="page-nav">
+        <button class="prev-btn" id="pending-prev" onclick="pendingPaginator.prevPage()" disabled>‹</button>
+        <span class="page-indicator" id="pending-page-indicator">1 / 1</span>
+        <button class="next-btn" id="pending-next" onclick="pendingPaginator.nextPage()" disabled>›</button>
+      </div>
+    </div>
+
+    <!-- Bulk action bar -->
     <div class="bulk-bar" id="bulk-bar" style="display:none;">
       <span class="bulk-bar-count" id="bulk-count">0 selected</span>
       <button type="button" class="bulk-bar-btn bulk-bar-btn--select-all" onclick="toggleSelectAll()">Select All</button>
@@ -239,11 +336,11 @@
 
   <!-- Applications -->
   <div class="section-title">Applications</div>
-  <div class="card-list">
+  <div class="card-list" id="apps-list">
     {% for app in applications %}
       {% set score = app.ats_score or 0 %}
       {% set score_class = 'high' if score >= 70 else ('medium' if score >= 40 else 'low') %}
-      <a class="app-card" href="/application/{{ app.id }}">
+      <a class="app-card" href="/application/{{ app.id }}" data-index="{{ loop.index0 }}">
         <div class="app-card-body">
           <div class="app-card-title">{{ app.title }}</div>
           <div class="app-card-meta">{{ app.company }}{% if app.location %} · {{ app.location }}{% endif %}</div>
@@ -276,6 +373,21 @@
     {% endfor %}
   </div>
 
+  <!-- Pagination for applications -->
+  {% if applications %}
+  <div class="pagination-bar" id="apps-pagination">
+    <span class="page-size-label">Show</span>
+    <button class="page-size-btn active" data-size="20" onclick="setAppsPageSize(20, this)">20</button>
+    <button class="page-size-btn" data-size="40" onclick="setAppsPageSize(40, this)">40</button>
+    <button class="page-size-btn" data-size="60" onclick="setAppsPageSize(60, this)">60</button>
+    <div class="page-nav">
+      <button class="prev-btn" id="apps-prev" onclick="appsPaginator.prevPage()" disabled>‹</button>
+      <span class="page-indicator" id="apps-page-indicator">1 / 1</span>
+      <button class="next-btn" id="apps-next" onclick="appsPaginator.nextPage()" disabled>›</button>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Campaign History -->
   {% if campaigns %}
     <details class="campaign-history">
@@ -288,6 +400,7 @@
               <div class="campaign-row-meta">
                 {% if c.started_at %}{{ c.started_at[:10] }}{% endif %}
                 {% if c.locations and c.locations != 'None' %} · {{ c.locations }}{% endif %}
+                {% if c.preferred_model and c.preferred_model != 'auto' %} · {{ c.preferred_model }}{% endif %}
               </div>
             </div>
             <div class="campaign-row-stats">
@@ -318,6 +431,58 @@
     </div>
   {% endif %}
 
+</div>
+
+<!-- Fit Breakdown Modal (rendered once, populated by JS) -->
+<div id="fit-modal" role="dialog" aria-modal="true" aria-labelledby="fit-modal-job-title">
+  <div class="fit-modal-overlay" onclick="closeFitModal()"></div>
+  <div class="fit-modal-content">
+    <div class="fit-modal-header">
+      <div>
+        <div class="fit-modal-title">Fit Analysis</div>
+        <div class="fit-modal-job" id="fit-modal-job-title">—</div>
+      </div>
+      <button class="fit-modal-close" onclick="closeFitModal()" aria-label="Close">✕</button>
+    </div>
+    <div class="fit-modal-body">
+      <!-- Score ring -->
+      <div class="fit-modal-score-col">
+        <div class="fit-modal-score-ring">
+          <svg viewBox="0 0 48 48">
+            <circle class="ats-ring-bg" cx="24" cy="24" r="20"/>
+            <circle id="fit-modal-ring-fill" class="ats-ring-fill high"
+                    cx="24" cy="24" r="20"
+                    stroke-dasharray="0 125.66"
+                    stroke-dashoffset="31.415"/>
+          </svg>
+          <div class="fit-modal-score-num">
+            <span class="score-val" id="fit-modal-score-val">—</span>
+            <span class="score-unit">FIT</span>
+          </div>
+        </div>
+        <div class="fit-modal-score-label">Score</div>
+      </div>
+      <!-- Strengths + Gaps -->
+      <div class="fit-modal-data">
+        <div id="fit-modal-strengths-wrap">
+          <div class="fit-modal-section-label">Strengths</div>
+          <div id="fit-modal-strengths"></div>
+        </div>
+        <div id="fit-modal-gaps-wrap">
+          <div class="fit-modal-section-label">Gaps</div>
+          <div id="fit-modal-gaps"></div>
+        </div>
+        <div id="fit-modal-verdict-wrap" style="display:none;">
+          <div class="fit-modal-section-label">Verdict</div>
+          <div class="fit-modal-verdict" id="fit-modal-verdict"></div>
+        </div>
+      </div>
+    </div>
+    <div class="fit-modal-footer">
+      <div class="fit-modal-section-label">JD Keywords</div>
+      <div class="fit-keywords-row" id="fit-modal-keywords"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -366,8 +531,6 @@
         const running = data.status && data.status !== 'Idle';
         applyRunningState(running);
         if (running) statusText.textContent = data.status;
-
-        // Reload only when new jobs appear (avoids constant flicker)
         if (data.pending_count !== undefined && data.pending_count !== lastPendingCount) {
           lastPendingCount = data.pending_count;
           location.reload();
@@ -381,13 +544,10 @@
     document.querySelectorAll('.stat-number[data-target]').forEach(el => {
       const target = parseInt(el.dataset.target, 10);
       if (isNaN(target) || target === 0) { el.textContent = 0; return; }
-      const dur = 700;
-      let start = null;
+      const dur = 700, start = performance.now();
       function tick(ts) {
-        if (!start) start = ts;
         const p = Math.min((ts - start) / dur, 1);
-        const eased = 1 - Math.pow(1 - p, 2);
-        el.textContent = Math.round(eased * target);
+        el.textContent = Math.round((1 - Math.pow(1 - p, 2)) * target);
         if (p < 1) requestAnimationFrame(tick);
       }
       requestAnimationFrame(tick);
@@ -402,12 +562,8 @@
     const checked = document.querySelectorAll('.job-checkbox:checked');
     const bar = document.getElementById('bulk-bar');
     if (!bar) return;
-    if (checked.length > 0) {
-      bar.style.display = 'flex';
-      document.getElementById('bulk-count').textContent = checked.length + ' selected';
-    } else {
-      bar.style.display = 'none';
-    }
+    bar.style.display = checked.length > 0 ? 'flex' : 'none';
+    document.getElementById('bulk-count').textContent = checked.length + ' selected';
   }
 
   function toggleSelectAll() {
@@ -417,8 +573,191 @@
     updateBulkBar();
   }
 
-  // Smart reload: pollStatus() already detects new jobs and reloads when
-  // pending count changes — no need for a blind timer-based full page reload.
+  /* ── Sort / Filter ───────────────────────────────────────── */
+  let currentFilter = 'all';
+
+  function sortJobs(mode, btn) {
+    document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const list = document.getElementById('pending-list');
+    if (!list) return;
+    const cards = Array.from(list.querySelectorAll('.app-card--pending'));
+    cards.sort((a, b) => {
+      if (mode === 'fit-desc') return (parseInt(b.dataset.fit) || 0) - (parseInt(a.dataset.fit) || 0);
+      if (mode === 'fit-asc')  return (parseInt(a.dataset.fit) || 0) - (parseInt(b.dataset.fit) || 0);
+      if (mode === 'newest')   return (b.dataset.created || '').localeCompare(a.dataset.created || '');
+      if (mode === 'model')    return (a.dataset.model || '').localeCompare(b.dataset.model || '');
+      return 0;
+    });
+    cards.forEach(c => list.appendChild(c));
+    if (window.pendingPaginator) pendingPaginator.reset();
+  }
+
+  function filterJobs(mode, btn) {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = mode;
+    const list = document.getElementById('pending-list');
+    if (!list) return;
+    list.querySelectorAll('.app-card--pending').forEach(c => {
+      const tailored = c.dataset.tailored === '1';
+      const visible = mode === 'all' || (mode === 'tailored' && tailored) || (mode === 'untailored' && !tailored);
+      c.style.display = visible ? '' : 'none';
+    });
+    if (window.pendingPaginator) pendingPaginator.reset();
+  }
+
+  /* ── Pagination ──────────────────────────────────────────── */
+  class PaginationController {
+    constructor(listId, prevId, nextId, indicatorId, pageSize = 20) {
+      this.listId = listId;
+      this.prevBtn = document.getElementById(prevId);
+      this.nextBtn = document.getElementById(nextId);
+      this.indicator = document.getElementById(indicatorId);
+      this.pageSize = pageSize;
+      this.currentPage = 1;
+      this.render();
+    }
+    getVisible() {
+      const list = document.getElementById(this.listId);
+      if (!list) return [];
+      return Array.from(list.children).filter(c => c.style.display !== 'none' && c.tagName === 'DIV');
+    }
+    render() {
+      const items = this.getVisible();
+      const total = Math.max(1, Math.ceil(items.length / this.pageSize));
+      this.currentPage = Math.min(this.currentPage, total);
+      items.forEach((item, i) => {
+        const page = Math.floor(i / this.pageSize) + 1;
+        item.style.display = (page === this.currentPage) ? '' : 'none';
+      });
+      if (this.indicator) this.indicator.textContent = `${this.currentPage} / ${total}`;
+      if (this.prevBtn) this.prevBtn.disabled = this.currentPage <= 1;
+      if (this.nextBtn) this.nextBtn.disabled = this.currentPage >= total;
+    }
+    nextPage() { this.currentPage++; this.render(); }
+    prevPage() { if (this.currentPage > 1) { this.currentPage--; this.render(); } }
+    reset() { this.currentPage = 1; this.render(); }
+    setPageSize(n) { this.pageSize = n; this.reset(); }
+  }
+
+  let pendingPaginator, appsPaginator;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (document.getElementById('pending-list')) {
+      pendingPaginator = new PaginationController('pending-list', 'pending-prev', 'pending-next', 'pending-page-indicator', 20);
+      window.pendingPaginator = pendingPaginator;
+    }
+    if (document.getElementById('apps-list')) {
+      appsPaginator = new PaginationController('apps-list', 'apps-prev', 'apps-next', 'apps-page-indicator', 20);
+      window.appsPaginator = appsPaginator;
+    }
+  });
+
+  function setPendingPageSize(n, btn) {
+    document.querySelectorAll('#pending-pagination .page-size-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    if (pendingPaginator) pendingPaginator.setPageSize(n);
+  }
+  function setAppsPageSize(n, btn) {
+    document.querySelectorAll('#apps-pagination .page-size-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    if (appsPaginator) appsPaginator.setPageSize(n);
+  }
+
+  /* ── Fit Modal ───────────────────────────────────────────── */
+  function openFitModal(jobId) {
+    const scriptEl = document.getElementById('fit-data-' + jobId);
+    if (!scriptEl) return;
+    let data;
+    try { data = JSON.parse(scriptEl.textContent); } catch(e) { return; }
+
+    document.getElementById('fit-modal-job-title').textContent =
+      (data.title || '') + (data.company ? ' · ' + data.company : '');
+    document.getElementById('fit-modal-score-val').textContent = data.fit_score || '—';
+
+    // Score ring
+    const score = parseInt(data.fit_score) || 0;
+    const circ = 125.66;
+    const fill = Math.max((score / 100) * circ, 2);
+    const ring = document.getElementById('fit-modal-ring-fill');
+    ring.setAttribute('stroke-dasharray', fill + ' ' + (circ - fill));
+    ring.className.baseVal = 'ats-ring-fill ' + (score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low');
+
+    // Strengths
+    const strengthsEl = document.getElementById('fit-modal-strengths');
+    const strengthsStr = data.strengths || '';
+    if (strengthsStr) {
+      strengthsEl.innerHTML = strengthsStr.split(',').map(s => s.trim()).filter(Boolean)
+        .map(s => `<span class="fit-chip-strength">● ${s}</span>`).join('');
+    } else {
+      strengthsEl.innerHTML = '<span style="color:var(--clr-text-muted);font-size:11px;">—</span>';
+    }
+
+    // Gaps
+    const gapsEl = document.getElementById('fit-modal-gaps');
+    const gapsStr = data.gaps || '';
+    if (gapsStr && gapsStr !== 'None') {
+      gapsEl.innerHTML = gapsStr.split(',').map(g => g.trim()).filter(Boolean)
+        .map(g => `<span class="fit-chip-gap">✗ ${g}</span>`).join('');
+      document.getElementById('fit-modal-gaps-wrap').style.display = '';
+    } else {
+      document.getElementById('fit-modal-gaps-wrap').style.display = 'none';
+    }
+
+    // Verdict
+    const verdictEl = document.getElementById('fit-modal-verdict');
+    const verdictWrap = document.getElementById('fit-modal-verdict-wrap');
+    if (data.verdict) {
+      verdictEl.textContent = data.verdict;
+      verdictWrap.style.display = '';
+    } else {
+      verdictWrap.style.display = 'none';
+    }
+
+    // Keywords
+    const kwEl = document.getElementById('fit-modal-keywords');
+    const kwStr = data.keywords || '';
+    kwEl.innerHTML = kwStr.split(',').map(k => k.trim()).filter(Boolean)
+      .map(k => `<span class="fit-kw-chip">${k}</span>`).join('');
+
+    document.getElementById('fit-modal').classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeFitModal() {
+    document.getElementById('fit-modal').classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeFitModal();
+  });
+
+  /* ── API Usage Bars ──────────────────────────────────────── */
+  const SOFT_LIMITS = {
+    'groq/llama-3.3-70b': 30,
+    'openrouter/gpt-oss-120b': 100,
+    'openrouter/minimax-m2.5': 100,
+    'openrouter/free': 50,
+    'anthropic/claude-sonnet': 20,
+  };
+
+  function updateUsageBars(usage) {
+    Object.entries(usage).forEach(([key, count]) => {
+      const safeid = key.replace(/\//g, '-');
+      const countEl = document.getElementById('usage-count-' + safeid);
+      const fillEl  = document.getElementById('usage-fill-' + safeid);
+      if (countEl) countEl.textContent = count + ' calls';
+      if (fillEl) {
+        const limit = SOFT_LIMITS[key] || 100;
+        const pct = Math.min((count / limit) * 100, 100);
+        fillEl.style.width = pct + '%';
+        fillEl.className = 'usage-fill' + (pct >= 80 ? ' high' : pct >= 50 ? ' medium' : '');
+      }
+    });
+  }
+
+  fetch('/api/usage').then(r => r.json()).then(updateUsageBars).catch(() => {});
 </script>
 </body>
 </html>

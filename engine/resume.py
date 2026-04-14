@@ -410,6 +410,15 @@ def _set_last_model(name: str):
         _last_model_used = name
 
 
+def _track_usage(model_key: str) -> None:
+    """Increment API usage counter. Lazy import to avoid circular dependency."""
+    try:
+        from db.database import increment_api_usage
+        increment_api_usage(model_key)
+    except Exception:
+        pass  # non-critical — never let tracking failures affect tailoring
+
+
 def _call_llm(prompt: str, max_tokens: int = 2048, preferred_model: str = "auto") -> str:
     """Call an LLM provider.
     If preferred_model is set (not 'auto'), call only that provider.
@@ -497,6 +506,7 @@ def _call_llm(prompt: str, max_tokens: int = 2048, preferred_model: str = "auto"
                 result = _call_provider(label, fn, _logger)
                 if result is not None:
                     _set_last_model(label)
+                    _track_usage(preferred_model)
                     return result
             raise RuntimeError(f"Model {preferred_model} failed — no API key or provider error")
         # Unknown model, fall through to auto
@@ -507,19 +517,21 @@ def _call_llm(prompt: str, max_tokens: int = 2048, preferred_model: str = "auto"
         result = _call_provider("Groq/Llama-3.3-70B", _groq, _logger)
         if result is not None:
             _set_last_model("Groq/Llama-3.3-70B")
+            _track_usage("groq/llama-3.3-70b")
             return result
         errors.append("Groq")
 
     if openrouter_key:
         _OR_MODELS = [
-            ("openai/gpt-oss-120b:free",  "OpenRouter/gpt-oss-120b:free"),
-            ("minimax/minimax-m2.5:free",  "OpenRouter/minimax-m2.5:free"),
-            ("openrouter/free",            "OpenRouter/free"),
+            ("openai/gpt-oss-120b:free",  "OpenRouter/gpt-oss-120b:free",  "openrouter/gpt-oss-120b"),
+            ("minimax/minimax-m2.5:free",  "OpenRouter/minimax-m2.5:free", "openrouter/minimax-m2.5"),
+            ("openrouter/free",            "OpenRouter/free",               "openrouter/free"),
         ]
-        for or_id, or_label in _OR_MODELS:
+        for or_id, or_label, or_key in _OR_MODELS:
             result = _call_provider(or_label, lambda m=or_id: _or_call(m), _logger)
             if result is not None:
                 _set_last_model(or_label)
+                _track_usage(or_key)
                 return result
             errors.append(or_label)
 
@@ -527,6 +539,7 @@ def _call_llm(prompt: str, max_tokens: int = 2048, preferred_model: str = "auto"
         result = _call_provider("Anthropic/Claude-Sonnet", _anthropic, _logger)
         if result is not None:
             _set_last_model("Anthropic/Claude-Sonnet")
+            _track_usage("anthropic/claude-sonnet")
             return result
         errors.append("Anthropic")
 

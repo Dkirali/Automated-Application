@@ -30,6 +30,7 @@ def _migrate(conn):
         "ALTER TABLE applications ADD COLUMN keywords TEXT",
         "ALTER TABLE applications ADD COLUMN jd_summary TEXT",
         "ALTER TABLE applications ADD COLUMN model_used TEXT",
+        "ALTER TABLE campaigns ADD COLUMN preferred_model TEXT DEFAULT 'auto'",
     ]
     for sql in migrations:
         try:
@@ -81,6 +82,14 @@ def init_db():
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+            CREATE TABLE IF NOT EXISTS api_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                model_key TEXT NOT NULL,
+                call_date TEXT NOT NULL,
+                call_count INTEGER DEFAULT 0,
+                UNIQUE(provider, model_key, call_date)
+            );
         """)
 
         _migrate(conn)
@@ -104,13 +113,36 @@ def is_setup_complete() -> bool:
     return all(get_config(k) is not None for k in required)
 
 
-def create_campaign(name: str, titles: str, locations: str) -> int:
+def create_campaign(name: str, titles: str, locations: str, preferred_model: str = "auto") -> int:
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO campaigns (name, titles, locations, status, started_at) VALUES (?,?,?,'running',?)",
-            (name, titles, locations, datetime.datetime.now(datetime.timezone.utc).isoformat())
+            "INSERT INTO campaigns (name, titles, locations, status, started_at, preferred_model) VALUES (?,?,?,'running',?,?)",
+            (name, titles, locations, datetime.datetime.now(datetime.timezone.utc).isoformat(), preferred_model)
         )
         return cur.lastrowid
+
+
+def increment_api_usage(model_key: str) -> None:
+    """Increment the call counter for a model for today (upsert)."""
+    today = datetime.date.today().isoformat()
+    provider = model_key.split("/")[0] if "/" in model_key else model_key
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO api_usage (provider, model_key, call_date, call_count) VALUES (?,?,?,1) "
+            "ON CONFLICT(provider, model_key, call_date) DO UPDATE SET call_count = call_count + 1",
+            (provider, model_key, today)
+        )
+
+
+def get_api_usage_today() -> dict:
+    """Return {model_key: call_count} for all models called today."""
+    today = datetime.date.today().isoformat()
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT model_key, call_count FROM api_usage WHERE call_date=?",
+            (today,)
+        ).fetchall()
+    return {r["model_key"]: r["call_count"] for r in rows}
 
 def update_campaign_status(campaign_id: int, status: str, stop_reason: str = None):
     with get_conn() as conn:
