@@ -36,7 +36,6 @@
 
     <!-- Dual ATS Rings -->
     <div class="ats-comparison">
-      <!-- Original score -->
       {% set orig = job.original_ats_score or 0 %}
       {% set tail = job.ats_score or 0 %}
       {% set orig_class = 'high' if orig >= 70 else ('medium' if orig >= 40 else 'low') %}
@@ -68,7 +67,6 @@
         </div>
       </div>
 
-      <!-- Delta indicator -->
       <div class="ats-delta">
         <span class="ats-delta-arrow">→</span>
         <span class="ats-delta-value {% if delta > 0 %}positive{% elif delta < 0 %}negative{% endif %}">
@@ -76,7 +74,6 @@
         </span>
       </div>
 
-      <!-- Tailored score -->
       <div class="ats-ring-wrap ats-ring-wrap--tailored">
         <svg class="ats-ring" viewBox="0 0 48 48" width="72" height="72">
           <defs>
@@ -106,29 +103,6 @@
       </div>
     </div>
   </div>
-
-  <!-- Pending: tailoring not done yet -->
-  {% if job.status == 'pending' %}
-    <div class="fit-bar" style="text-align:center;padding:32px 24px;">
-      <div style="font-size:28px;margin-bottom:8px;">⏳</div>
-      <div style="color:var(--clr-warning);font-family:var(--font-hud);font-size:14px;margin-bottom:6px;">Resume tailoring in progress...</div>
-      <div style="color:var(--clr-text);opacity:.5;font-size:12px;">This page will auto-refresh when ready.</div>
-    </div>
-    <script>
-      // Poll the application status and reload when tailoring completes
-      const _statusPoll = setInterval(() => {
-        fetch('/api/job-status/{{ job.id }}')
-          .then(r => r.json())
-          .then(d => {
-            if (d.status !== 'pending') {
-              clearInterval(_statusPoll);
-              location.reload();
-            }
-          })
-          .catch(() => {});
-      }, 4000);
-    </script>
-  {% endif %}
 
   <!-- Fit Analysis Bar -->
   {% if fit and (fit.strengths or fit.gaps or fit.verdict) %}
@@ -167,7 +141,7 @@
   <!-- Two-panel review grid -->
   <div class="review-grid">
 
-    <!-- Left: Job Description (smart summary) -->
+    <!-- Left: Job Brief -->
     <div class="review-panel">
       <div class="review-panel-header">
         <span class="review-panel-title">Job Brief</span>
@@ -203,32 +177,77 @@
       </div>
     </div>
 
-    <!-- Right: Tailored Resume -->
-    <div class="review-panel">
-      <div class="review-panel-header">
-        <span class="review-panel-title">Tailored Resume</span>
-        <div class="panel-header-actions">
-          {% if job.resume_path %}
-            <a href="/download/{{ job.id }}" class="panel-action-btn">↓ Download</a>
+    <!-- Right: Tailored Resume Panel -->
+    <div class="resume-panel">
+
+      <!-- Sticky Header -->
+      <div class="resume-panel-header">
+        <div class="resume-panel-title">
+          <span class="panel-label">TAILORED RESUME</span>
+          {% if job.model_used %}
+            <span class="model-badge tailored-model-badge">{{ job.model_used }}</span>
           {% endif %}
-          <form method="POST" action="/retailor/{{ job.id }}" class="form-inline">
-            <button type="submit" class="panel-action-btn panel-action-btn--secondary" title="Re-generate tailored resume">↺ Re-tailor</button>
+        </div>
+        <div class="resume-panel-actions">
+          {% if job.keywords %}
+            <span class="kw-match-badge" title="Keywords matched in resume">
+              <span id="kw-match-count">—</span>&thinsp;/&thinsp;{{ job.keywords.split(',')|length }} kw
+            </span>
+          {% endif %}
+          {% if job.resume_path %}
+            <a href="/download/{{ job.id }}" class="btn-download">↓ PDF</a>
+          {% endif %}
+          <form method="POST" action="/retailor/{{ job.id }}" class="retailor-form-inline">
+            <select name="model" class="model-select-inline" title="Choose LLM model">
+              {% for key, label in available_models.items() %}
+                <option value="{{ key }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="btn-retailor">⟳ Re-tailor</button>
           </form>
         </div>
       </div>
-      <div class="review-panel-body" id="resume-panel-body">
-        <div id="resume-skeleton">
-          <div class="skeleton-line" style="width:55%"></div>
-          <div class="skeleton-line" style="width:80%"></div>
-          <div class="skeleton-line" style="width:70%"></div>
-          <div class="skeleton-line" style="width:65%"></div>
-          <div class="skeleton-line" style="width:90%"></div>
-          <div class="skeleton-line" style="width:50%"></div>
-          <div class="skeleton-line" style="width:75%"></div>
-          <div class="skeleton-line" style="width:60%"></div>
-        </div>
-        <div class="resume-rendered" id="resume-rendered" style="display:none"></div>
-        <p class="empty-note" id="resume-error" style="display:none">Could not load resume.</p>
+
+      <!-- Resume Body -->
+      <div class="resume-body" id="resume-panel-body">
+        {% if tailoring_in_progress or (job.status == 'pending' and job.resume_path) %}
+          <!-- Tailoring triggered — poll for completion -->
+          <div id="resume-skeleton">
+            <div class="skeleton-line" style="width:55%"></div>
+            <div class="skeleton-line" style="width:80%"></div>
+            <div class="skeleton-line" style="width:70%"></div>
+            <div class="skeleton-line" style="width:65%"></div>
+            <div class="skeleton-line" style="width:90%"></div>
+            <div class="skeleton-line" style="width:50%"></div>
+            <div class="skeleton-line" style="width:75%"></div>
+            <div class="skeleton-line" style="width:60%"></div>
+          </div>
+          <div class="resume-tailoring-msg">
+            <div class="spinner" style="display:inline-block;width:18px;height:18px;margin-right:8px;vertical-align:middle;"></div>
+            Tailoring resume… this takes about 30–60 seconds.
+          </div>
+        {% elif job.status == 'pending' and not job.resume_path %}
+          <!-- Not tailored yet -->
+          <div class="resume-not-tailored">
+            <div class="resume-not-tailored-icon">◈</div>
+            <div class="resume-not-tailored-msg">Resume not tailored yet</div>
+            <div class="resume-not-tailored-hint">Select a model above and click Re-tailor to generate your tailored resume for this role.</div>
+          </div>
+        {% else %}
+          <!-- Resume ready or loading -->
+          <div id="resume-skeleton">
+            <div class="skeleton-line" style="width:55%"></div>
+            <div class="skeleton-line" style="width:80%"></div>
+            <div class="skeleton-line" style="width:70%"></div>
+            <div class="skeleton-line" style="width:65%"></div>
+            <div class="skeleton-line" style="width:90%"></div>
+            <div class="skeleton-line" style="width:50%"></div>
+            <div class="skeleton-line" style="width:75%"></div>
+            <div class="skeleton-line" style="width:60%"></div>
+          </div>
+          <div class="resume-rendered" id="resume-rendered" style="display:none"></div>
+          <p class="empty-note" id="resume-error" style="display:none">Could not load resume.</p>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -269,7 +288,7 @@ function renderMarkdown(text) {
     else if (line.startsWith('> '))
       html += `<p class="resume-summary">${inlineBold(esc(line.slice(2)))}</p>`;
     else if (line.startsWith('- '))
-      html += `<p class="resume-bullet">&bull; ${inlineBold(esc(line.slice(2)))}</p>`;
+      html += `<p class="resume-bullet">${inlineBold(esc(line.slice(2)))}</p>`;
     else if (line.trim() === '')
       html += '<div class="resume-spacer"></div>';
     else if (isAllCapsHeading(line))
@@ -282,17 +301,21 @@ function renderMarkdown(text) {
 
 /* ── Keyword highlighter ─────────────────────────────────────────── */
 function highlightKeywords(container, keywords) {
-  if (!keywords || !keywords.length) return;
+  if (!keywords || !keywords.length) return 0;
   const parts = keywords.map(k => {
-    const esc = k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-    return k.length <= 4 ? '\\b' + esc + '\\b' : esc;
+    const e = k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    return k.length <= 4 ? '\\b' + e + '\\b' : e;
   });
   const pattern = new RegExp('(' + parts.join('|') + ')', 'gi');
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   const nodes = [];
   let node;
   while ((node = walker.nextNode())) nodes.push(node);
+  const matched = new Set();
   for (const n of nodes) {
+    const matches = n.textContent.match(pattern);
+    if (matches) matches.forEach(m => matched.add(m.toLowerCase()));
+    pattern.lastIndex = 0;
     if (!pattern.test(n.textContent)) { pattern.lastIndex = 0; continue; }
     pattern.lastIndex = 0;
     const span = document.createElement('span');
@@ -300,6 +323,7 @@ function highlightKeywords(container, keywords) {
     pattern.lastIndex = 0;
     n.parentNode.replaceChild(span, n);
   }
+  return matched.size;
 }
 
 /* ── ATS count-up animation ─────────────────────────────────────── */
@@ -319,40 +343,35 @@ function startCountUp() {
 }
 
 /* ── Load resume text ────────────────────────────────────────────── */
-{% if job.resume_path %}
+{% if tailoring_in_progress %}
+  {# Poll until tailoring completes, then load resume #}
+  const _statusPoll = setInterval(() => {
+    fetch('/api/job-status/{{ job.id }}')
+      .then(r => r.json())
+      .then(d => {
+        if (d.status !== 'pending') {
+          clearInterval(_statusPoll);
+          location.reload();
+        }
+      })
+      .catch(() => {});
+  }, 4000);
+{% elif job.resume_path %}
   fetch('/resume-text/{{ job.id }}')
     .then(r => r.json())
     .then(data => {
       document.getElementById('resume-skeleton').style.display = 'none';
       const el = document.getElementById('resume-rendered');
       el.innerHTML = renderMarkdown(data.text || '');
-      highlightKeywords(el, data.keywords || []);
+      const matchCount = highlightKeywords(el, data.keywords || []);
       el.style.display = 'block';
+      const kwBadge = document.getElementById('kw-match-count');
+      if (kwBadge) kwBadge.textContent = matchCount;
     })
     .catch(() => {
       document.getElementById('resume-skeleton').style.display = 'none';
       document.getElementById('resume-error').style.display = 'block';
     });
-{% elif job.status != 'pending' %}
-  {# Only poll if job is not pending — pending jobs use the status-based auto-reload instead #}
-  let _attempts = 0;
-  const _poll = setInterval(() => {
-    _attempts++;
-    fetch('/resume-text/{{ job.id }}')
-      .then(r => r.json())
-      .then(data => {
-        if (data.text && data.text.trim()) {
-          clearInterval(_poll);
-          document.getElementById('resume-skeleton').style.display = 'none';
-          const el = document.getElementById('resume-rendered');
-          el.innerHTML = renderMarkdown(data.text);
-          highlightKeywords(el, data.keywords || []);
-          el.style.display = 'block';
-        }
-        if (_attempts >= 30) clearInterval(_poll);
-      })
-      .catch(() => { if (_attempts >= 30) clearInterval(_poll); });
-  }, 3000);
 {% endif %}
 
 document.addEventListener('DOMContentLoaded', startCountUp);

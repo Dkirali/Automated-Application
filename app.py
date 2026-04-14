@@ -10,10 +10,10 @@ from db.database import (
     create_campaign, update_campaign_status, get_active_campaign,
     insert_manual, get_all_applications, get_manual_queue, get_seen_urls,
     update_application, insert_application, get_pending_jobs, mark_applied,
-    get_application, get_all_campaigns
+    get_application, get_all_campaigns, get_api_usage_today
 )
 
-from engine.resume import tailor_resume, generate_fit_summary
+from engine.resume import tailor_resume, generate_fit_summary, AVAILABLE_MODELS, get_last_model_used
 from engine.submitter import submit_application
 
 load_dotenv()
@@ -127,7 +127,18 @@ def dashboard():
         raw = job.get("fit_summary") or ""
         job["fit_score"] = parse_fit_score(raw)
         job["verdict"] = parse_fit_field(raw, "VERDICT")
+        job["fit_strengths"] = [s.strip() for s in parse_fit_field(raw, "STRENGTHS").split(",") if s.strip()]
+        job["fit_gaps"] = [g.strip() for g in parse_fit_field(raw, "GAPS").split(",") if g.strip()]
     campaigns = get_all_campaigns()
+    # Determine which models have API keys configured
+    configured_models = set()
+    if os.environ.get("GROQ_API_KEY"):
+        configured_models.add("groq/llama-3.3-70b")
+    if os.environ.get("OPENROUTER_API_KEY"):
+        configured_models.update(["openrouter/gpt-oss-120b", "openrouter/minimax-m2.5", "openrouter/free"])
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        configured_models.add("anthropic/claude-sonnet")
+
     return render_template("dashboard.html",
                            linkedin_connected=_linkedin_connected(),
                            applications=applications,
@@ -136,7 +147,10 @@ def dashboard():
                            campaigns=campaigns,
                            stats=stats,
                            alert=_alert,
-                           resume_name=resume_name)
+                           resume_name=resume_name,
+                           active_model=get_last_model_used(),
+                           available_models=AVAILABLE_MODELS,
+                           configured_models=configured_models)
 
 
 @app.route("/settings", methods=["GET", "POST"])
@@ -148,8 +162,8 @@ def settings():
         email = request.form.get("email", "").strip()
         phone = request.form.get("phone", "").strip()
         api_key = request.form.get("api_key", "").strip()
-        gemini_key = request.form.get("gemini_key", "").strip()
         groq_key = request.form.get("groq_key", "").strip()
+        openrouter_key = request.form.get("openrouter_key", "").strip()
         resume_file = request.files.get("resume")
 
         if not all([name, email, phone]):
@@ -158,7 +172,7 @@ def settings():
             set_config("name", name)
             set_config("email", email)
             set_config("phone", phone)
-            if api_key or gemini_key or groq_key:
+            if api_key or groq_key or openrouter_key:
                 from dotenv import dotenv_values
                 env_path = Path(".env")
                 existing = dict(dotenv_values(env_path)) if env_path.exists() else {}
@@ -168,9 +182,9 @@ def settings():
                 if groq_key:
                     existing["GROQ_API_KEY"] = groq_key
                     os.environ["GROQ_API_KEY"] = groq_key
-                if gemini_key:
-                    existing["GEMINI_API_KEY"] = gemini_key
-                    os.environ["GEMINI_API_KEY"] = gemini_key
+                if openrouter_key:
+                    existing["OPENROUTER_API_KEY"] = openrouter_key
+                    os.environ["OPENROUTER_API_KEY"] = openrouter_key
                 env_path.write_text("\n".join(f"{k}={v}" for k, v in existing.items()) + "\n")
             if resume_file and resume_file.filename:
                 new_path, err = _save_resume(resume_file)
@@ -203,6 +217,7 @@ def campaign_start():
         work_types = request.form.getlist("work_type")        # e.g. ["1","2","3"]
         experience_levels = request.form.getlist("exp_level") # e.g. ["3","4"]
         date_posted = request.form.get("date_posted", "")     # e.g. "r604800"
+        preferred_model = request.form.get("preferred_model", "auto")
         titles = [t.strip() for t in titles_raw.split(",") if t.strip()]
 
         if not titles:
@@ -217,7 +232,8 @@ def campaign_start():
         }
 
         campaign_id = create_campaign(
-            name=titles_raw, titles=titles_raw, locations=location_text
+            name=titles_raw, titles=titles_raw, locations=location_text,
+            preferred_model=preferred_model
         )
 
         _stop_event = threading.Event()
@@ -246,6 +262,12 @@ def campaign_stop():
 def status():
     pending = get_pending_jobs()
     return jsonify(status=_status, pending_count=len(pending))
+
+
+@app.route("/api/usage")
+def api_usage():
+    """Return today's API call counts per model key."""
+    return jsonify(get_api_usage_today())
 
 
 @app.route("/linkedin-status")
@@ -280,15 +302,9 @@ def application_detail(app_id):
 
 def process_job(campaign_id: int, job: dict, stop_event) -> None:
     """
-    Insert a single scraped job as 'pending', then immediately tailor the resume
-    in the same background thread.
-
-    Status flow:
-      pending  →  reviewed  (tailor succeeded)
-      pending  →  failed    (tailor raised)
-
-    If no master_resume_path is configured, the job is left as 'pending' so the
-    user can still review it manually.
+    Insert a single scraped job as 'pending'. Tailoring is manual — the user
+    clicks 'Tailor Resume' on the dashboard card. Fit analysis runs automatically
+    in a background thread so the user can see match quality first.
     """
     company = job.get("company", "Unknown")
     title   = job.get("title", "Unknown")
@@ -302,22 +318,17 @@ def process_job(campaign_id: int, job: dict, stop_event) -> None:
         return  # duplicate URL — skip
 
     master_path = get_config("master_resume_path")
-    if not master_path or not job.get("job_description"):
-        # Nothing to tailor — leave as pending for manual review
-        return
-
-    try:
-        tailor = tailor_resume(app_id, job["job_description"], master_path)
-        update_application(
-            app_id, "reviewed",
-            ats_score=tailor["ats_score"],
-            original_ats_score=tailor.get("original_ats_score"),
-            keywords=tailor.get("keywords_str"),
-            resume_path=tailor["docx_path"],
-        )
-    except Exception as e:
-        logger.error("process_job failed for app_id=%s: %s", app_id, e, exc_info=True)
-        update_application(app_id, "failed")
+    jd = job.get("job_description", "")
+    if master_path and jd:
+        def _bg_fit(aid, desc, mpath):
+            try:
+                fit = generate_fit_summary(desc, mpath)
+                update_application(aid, "pending",
+                                   fit_summary=fit.get("raw", ""),
+                                   jd_summary=fit.get("jd_summary", ""))
+            except Exception as e:
+                logger.warning("Fit summary failed for app_id=%s (non-fatal): %s", aid, e)
+        threading.Thread(target=_bg_fit, args=(app_id, jd, master_path), daemon=True).start()
 
 
 def _wait_with_countdown(update_fn, stop_event, total_seconds: int, message_template: str):
@@ -385,42 +396,27 @@ def run_campaign(campaign_id: int, titles: list, filters: dict, stop_event):
             if not app_id:
                 return  # duplicate URL
             jobs_found += 1
-
-            # Tailor immediately — don't defer to a later loop
-            jd = job.get("job_description", "")
             title = job.get("title", "Unknown")
             company = job.get("company", "Unknown")
-            if not master_path or not jd:
-                return
-            update(f"[{jobs_found} found] Tailoring: {title} at {company}…")
-            try:
-                tailor = tailor_resume(app_id, jd, master_path)
-                update_application(
-                    app_id, "reviewed",
-                    ats_score=tailor["ats_score"],
-                    original_ats_score=tailor.get("original_ats_score"),
-                    keywords=tailor.get("keywords_str"),
-                    resume_path=tailor["docx_path"],
-                )
-                logger.info("Tailored app_id=%s (%s at %s)", app_id, title, company)
-            except Exception as e:
-                jobs_failed += 1
-                logger.error("Tailoring failed for app_id=%s (%s at %s): %s",
-                             app_id, title, company, e, exc_info=True)
-                update_application(app_id, "failed")
-                return
+            jd = job.get("job_description", "")
+            update(f"[{jobs_found} found] {title} at {company} — awaiting manual tailor")
 
-            # Fit summary is optional — don't fail the job if this call errors
-            try:
-                fit = generate_fit_summary(jd, master_path)
-                update_application(
-                    app_id, "reviewed",
-                    fit_summary=fit.get("raw", ""),
-                    jd_summary=fit.get("jd_summary", ""),
-                )
-            except Exception as e:
-                logger.warning("Fit summary failed for app_id=%s (non-fatal): %s",
-                               app_id, e)
+            # Fit summary runs automatically in background so the user can see
+            # match quality before deciding whether to tailor.
+            # Resume tailoring is manual (user clicks "Tailor Resume" on the card).
+            if master_path and jd:
+                def _bg_fit(aid, desc, mpath):
+                    try:
+                        fit = generate_fit_summary(desc, mpath)
+                        update_application(
+                            aid, "pending",
+                            fit_summary=fit.get("raw", ""),
+                            jd_summary=fit.get("jd_summary", ""),
+                        )
+                    except Exception as exc:
+                        logger.warning("Fit summary failed for app_id=%s (non-fatal): %s",
+                                       aid, exc)
+                threading.Thread(target=_bg_fit, args=(app_id, jd, master_path), daemon=True).start()
 
         try:
             scrape_jobs(titles, filters, seen_urls, stop_event,
@@ -468,7 +464,10 @@ def review_job(app_id):
         "jd_keywords": job.get("keywords"),
     }
 
-    return render_template("review.html", job=job, fit=fit)
+    tailoring_in_progress = bool(request.args.get("tailoring"))
+    return render_template("review.html", job=job, fit=fit,
+                           available_models=AVAILABLE_MODELS,
+                           tailoring_in_progress=tailoring_in_progress)
 
 
 @app.route("/apply/<int:app_id>", methods=["POST"])
@@ -519,6 +518,8 @@ def retailor_job(app_id):
     if not job:
         return redirect(url_for("dashboard"))
 
+    preferred_model = request.form.get("model", "auto")
+
     # Preserve existing keywords so original ATS score stays stable on re-tailor
     stored_keywords_str = job.get("keywords") or ""
     stored_keywords = [k.strip() for k in stored_keywords_str.split(",") if k.strip()]
@@ -530,26 +531,28 @@ def retailor_job(app_id):
         conn.execute(
             "UPDATE applications SET resume_path=NULL, ats_score=NULL, "
             "original_ats_score=NULL, fit_summary=NULL, "
-            "jd_summary=NULL WHERE id=?",
+            "jd_summary=NULL, model_used=NULL WHERE id=?",
             (app_id,)
         )
 
-    def _retailor(app_id, jd, existing_kw):
+    def _retailor(app_id, jd, existing_kw, model):
         master_path = get_config("master_resume_path")
         if not master_path or not jd:
             logger.error("retailor: no master resume or JD for app_id=%s", app_id)
             return
         try:
             tailor = tailor_resume(app_id, jd, master_path,
-                                  existing_keywords=existing_kw or None)
+                                  existing_keywords=existing_kw or None,
+                                  preferred_model=model)
             update_application(
                 app_id, "reviewed",
                 ats_score=tailor["ats_score"],
                 original_ats_score=tailor.get("original_ats_score"),
                 keywords=tailor.get("keywords_str"),
                 resume_path=tailor["docx_path"],
+                model_used=tailor.get("model_used"),
             )
-            logger.info("Re-tailored app_id=%s", app_id)
+            logger.info("Re-tailored app_id=%s with model=%s", app_id, tailor.get("model_used"))
         except Exception as e:
             logger.error("Re-tailor failed for app_id=%s: %s", app_id, e, exc_info=True)
             update_application(app_id, "failed")
@@ -565,8 +568,8 @@ def retailor_job(app_id):
         except Exception as e:
             logger.warning("Fit summary failed for app_id=%s (non-fatal): %s", app_id, e)
 
-    threading.Thread(target=_retailor, args=(app_id, job.get("job_description", ""), stored_keywords), daemon=True).start()
-    return redirect(url_for("review_job", app_id=app_id))
+    threading.Thread(target=_retailor, args=(app_id, job.get("job_description", ""), stored_keywords, preferred_model), daemon=True).start()
+    return redirect(url_for("review_job", app_id=app_id, tailoring=1))
 
 
 @app.route("/retry-pending", methods=["POST"])
@@ -646,7 +649,8 @@ def resume_text(app_id):
 
 
 def _retry_stale_jobs():
-    """Re-queue tailoring for jobs stuck as 'pending' or 'failed' from a previous crash."""
+    """Run fit analysis for pending jobs that don't have it yet (non-blocking).
+    Tailoring is now manual, so we do NOT auto-tailor stale jobs on startup."""
     master_path = get_config("master_resume_path")
     if not master_path:
         return
@@ -655,42 +659,27 @@ def _retry_stale_jobs():
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM applications WHERE status IN ('pending', 'failed') "
+            "AND fit_summary IS NULL "
             "AND job_description IS NOT NULL AND job_description != ''",
         ).fetchall()
     stale = [dict(r) for r in rows]
 
     if not stale:
         return
-    logger.info("Auto-retrying %d stale job(s) from previous session", len(stale))
+    logger.info("Running fit analysis for %d job(s) without fit data", len(stale))
 
     def _run(jobs):
         for job in jobs:
             app_id = job["id"]
             jd = job["job_description"]
             try:
-                tailor = tailor_resume(app_id, jd, master_path)
-                update_application(
-                    app_id, "reviewed",
-                    ats_score=tailor["ats_score"],
-                    original_ats_score=tailor.get("original_ats_score"),
-                    keywords=tailor.get("keywords_str"),
-                    resume_path=tailor["docx_path"],
-                )
-                logger.info("Auto-retry succeeded for app_id=%s (%s)", app_id, job.get("title"))
-            except Exception as e:
-                logger.error("Auto-retry failed for app_id=%s: %s", app_id, e)
-                update_application(app_id, "failed")
-                continue
-
-            try:
                 fit = generate_fit_summary(jd, master_path)
-                update_application(
-                    app_id, "reviewed",
-                    fit_summary=fit.get("raw", ""),
-                    jd_summary=fit.get("jd_summary", ""),
-                )
+                update_application(app_id, "pending",
+                                   fit_summary=fit.get("raw", ""),
+                                   jd_summary=fit.get("jd_summary", ""))
+                logger.info("Fit analysis completed for app_id=%s (%s)", app_id, job.get("title"))
             except Exception as e:
-                logger.warning("Fit summary failed for app_id=%s (non-fatal): %s", app_id, e)
+                logger.warning("Fit analysis failed for app_id=%s (non-fatal): %s", app_id, e)
 
     threading.Thread(target=_run, args=(stale,), daemon=True).start()
 

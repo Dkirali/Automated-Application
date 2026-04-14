@@ -1,15 +1,16 @@
 """
-TDD tests for process_job() — eager tailoring at insert time.
+TDD tests for process_job() — manual-tailor flow (Feature 6).
 
 These tests verify:
-1. tailor_resume is called with correct args when process_job() runs.
-2. The application is inserted with status 'pending' before tailoring starts.
-3. After successful tailoring, update_application is called with ats_score and resume_path.
-4. If tailor_resume raises, the application status is set to 'failed'.
+1. tailor_resume is NOT called automatically when process_job() runs.
+2. The application is inserted with status 'pending'.
+3. generate_fit_summary IS called in a background thread.
+4. If generate_fit_summary fails, the application stays 'pending' (non-fatal).
 """
 import threading
+import time
 import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 import db.database as db_module
 from db.database import init_db, get_application
@@ -42,18 +43,17 @@ def _make_job(**overrides):
 
 
 def _run_process_job(job, campaign_id=1):
-    """Import and call process_job() after the module is loaded."""
     from app import process_job
     stop_event = threading.Event()
     process_job(campaign_id, job, stop_event)
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — tailor_resume is called with the correct arguments
+# Test 1 — tailor_resume must NOT be called automatically
 # ---------------------------------------------------------------------------
 
-def test_tailor_called_on_job_insert(tmp_path):
-    """process_job() must call tailor_resume(app_id, job_description, master_path)."""
+def test_tailor_not_called_on_job_insert(tmp_path):
+    """process_job() must NOT call tailor_resume — tailoring is now manual."""
     resume = tmp_path / "master.docx"
     resume.write_bytes(b"fake")
 
@@ -61,34 +61,47 @@ def test_tailor_called_on_job_insert(tmp_path):
     set_config("master_resume_path", str(resume))
     campaign_id = create_campaign("test", "PM", "Remote")
 
-    tailor_result = {
-        "ats_score": 75,
-        "original_ats_score": 50,
-        "keywords_str": "python, agile",
-        "docx_path": str(tmp_path / "tailored.docx"),
-    }
+    with patch("app.tailor_resume") as mock_tailor, \
+         patch("app.generate_fit_summary", return_value={"raw": "", "jd_summary": ""}):
+        _run_process_job(_make_job(), campaign_id=campaign_id)
+        time.sleep(0.3)  # allow background fit thread to start
 
-    with patch("app.tailor_resume", return_value=tailor_result) as mock_tailor:
+    mock_tailor.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test 2 — application is inserted with status 'pending'
+# ---------------------------------------------------------------------------
+
+def test_application_inserted_as_pending(tmp_path):
+    """process_job() must insert the application with status='pending'."""
+    resume = tmp_path / "master.docx"
+    resume.write_bytes(b"fake")
+
+    from db.database import set_config, create_campaign
+    set_config("master_resume_path", str(resume))
+    campaign_id = create_campaign("test", "PM", "Remote")
+
+    with patch("app.generate_fit_summary", return_value={"raw": "", "jd_summary": ""}):
         _run_process_job(_make_job(), campaign_id=campaign_id)
 
-    mock_tailor.assert_called_once()
-    call_args = mock_tailor.call_args
-    # First arg is the app_id (int), second is job_description, third is master path
-    assert isinstance(call_args[0][0], int), "First arg must be app_id (int)"
-    assert call_args[0][1] == "Build products.", "Second arg must be job_description"
-    assert call_args[0][2] == str(resume), "Third arg must be master_resume_path"
+    from db.database import get_conn
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT status FROM applications WHERE url=?",
+            ("https://linkedin.com/jobs/view/999",)
+        ).fetchone()
+
+    assert row is not None, "Application was not inserted"
+    assert row["status"] == "pending", f"Expected 'pending', got {row['status']!r}"
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — status is 'pending' right after insert, before tailor completes
+# Test 3 — generate_fit_summary IS called in background
 # ---------------------------------------------------------------------------
 
-def test_application_status_set_to_pending_before_tailor(tmp_path):
-    """
-    The application must be inserted with status='pending' before tailor_resume
-    is invoked. We verify by capturing the app_id inside a patched tailor_resume
-    and checking the DB status at that exact moment.
-    """
+def test_fit_summary_called_on_job_insert(tmp_path):
+    """process_job() must call generate_fit_summary() automatically."""
     resume = tmp_path / "master.docx"
     resume.write_bytes(b"fake")
 
@@ -96,35 +109,25 @@ def test_application_status_set_to_pending_before_tailor(tmp_path):
     set_config("master_resume_path", str(resume))
     campaign_id = create_campaign("test", "PM", "Remote")
 
-    status_at_tailor_time = {}
+    fit_called = threading.Event()
 
-    def capture_status(app_id, job_description, master_path):
-        row = get_application(app_id)
-        status_at_tailor_time["status"] = row["status"] if row else None
-        return {
-            "ats_score": 60,
-            "original_ats_score": 40,
-            "keywords_str": "agile",
-            "docx_path": str(tmp_path / "tailored.docx"),
-        }
+    def fake_fit(jd, mpath):
+        fit_called.set()
+        return {"raw": "FIT_SCORE: 72\nSTRENGTHS: planning\nGAPS: None\nVERDICT: Good fit.", "jd_summary": ""}
 
-    with patch("app.tailor_resume", side_effect=capture_status):
+    with patch("app.generate_fit_summary", side_effect=fake_fit):
         _run_process_job(_make_job(), campaign_id=campaign_id)
+        fit_called.wait(timeout=5)
 
-    assert status_at_tailor_time["status"] == "pending", (
-        f"Expected 'pending' at tailor time, got {status_at_tailor_time['status']!r}"
-    )
+    assert fit_called.is_set(), "generate_fit_summary was not called by process_job()"
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — update_application called with ats_score and resume_path on success
+# Test 4 — fit summary failure keeps job as 'pending' (non-fatal)
 # ---------------------------------------------------------------------------
 
-def test_application_updated_after_tailor(tmp_path):
-    """
-    After tailor_resume returns successfully, update_application must be called
-    with status='reviewed', ats_score, and resume_path from the tailor result.
-    """
+def test_fit_failure_keeps_pending(tmp_path):
+    """If generate_fit_summary raises, application must stay 'pending', not 'failed'."""
     resume = tmp_path / "master.docx"
     resume.write_bytes(b"fake")
 
@@ -132,50 +135,26 @@ def test_application_updated_after_tailor(tmp_path):
     set_config("master_resume_path", str(resume))
     campaign_id = create_campaign("test", "PM", "Remote")
 
-    tailor_result = {
-        "ats_score": 88,
-        "original_ats_score": 55,
-        "keywords_str": "product, roadmap",
-        "docx_path": str(tmp_path / "tailored.docx"),
-    }
+    done = threading.Event()
 
-    with patch("app.tailor_resume", return_value=tailor_result):
-        with patch("app.update_application") as mock_update:
-            _run_process_job(_make_job(), campaign_id=campaign_id)
+    def exploding_fit(jd, mpath):
+        done.set()
+        raise RuntimeError("LLM exploded")
 
-    # Find the call that sets the reviewed status
-    reviewed_calls = [c for c in mock_update.call_args_list
-                      if len(c[0]) >= 2 and c[0][1] == "reviewed"]
-    assert reviewed_calls, "update_application was never called with status='reviewed'"
+    with patch("app.generate_fit_summary", side_effect=exploding_fit):
+        _run_process_job(_make_job(), campaign_id=campaign_id)
+        done.wait(timeout=5)
 
-    _, kwargs = reviewed_calls[0]
-    assert kwargs.get("ats_score") == 88, f"Expected ats_score=88, got {kwargs.get('ats_score')}"
-    assert kwargs.get("resume_path") == str(tmp_path / "tailored.docx"), (
-        f"Expected resume_path to match docx_path, got {kwargs.get('resume_path')!r}"
+    time.sleep(0.2)  # let exception handler run
+
+    from db.database import get_conn
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT status FROM applications WHERE url=?",
+            ("https://linkedin.com/jobs/view/999",)
+        ).fetchone()
+
+    assert row is not None, "Application was not inserted"
+    assert row["status"] == "pending", (
+        f"Expected status to stay 'pending' after fit failure, got {row['status']!r}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Test 4 — tailor_resume failure marks application as 'failed'
-# ---------------------------------------------------------------------------
-
-def test_tailor_failure_marks_failed(tmp_path):
-    """
-    If tailor_resume raises an exception, the application must be updated to
-    status='failed' and the exception must not propagate out of process_job().
-    """
-    resume = tmp_path / "master.docx"
-    resume.write_bytes(b"fake")
-
-    from db.database import set_config, create_campaign, insert_application
-    set_config("master_resume_path", str(resume))
-    campaign_id = create_campaign("test", "PM", "Remote")
-
-    with patch("app.tailor_resume", side_effect=RuntimeError("LLM exploded")):
-        with patch("app.update_application") as mock_update:
-            # Must NOT raise
-            _run_process_job(_make_job(), campaign_id=campaign_id)
-
-    failed_calls = [c for c in mock_update.call_args_list
-                    if len(c[0]) >= 2 and c[0][1] == "failed"]
-    assert failed_calls, "update_application was never called with status='failed' on tailor error"
