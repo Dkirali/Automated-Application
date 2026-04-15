@@ -19,7 +19,7 @@ export function classifyStopSignal(signal: string): StopSignal | null {
   return map[signal] ?? null;
 }
 
-export async function checkPageForStopSignal(page: Page): Promise<StopSignal | null> {
+async function checkPageForStopSignal(page: Page): Promise<StopSignal | null> {
   const url = page.url().toLowerCase();
 
   if (url.includes("checkpoint") || url.includes("challenge")) {

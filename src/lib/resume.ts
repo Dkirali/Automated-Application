@@ -167,19 +167,6 @@ export function stripMarkdown(text: string): string {
 
 // ── Resume reading ──────────────────────────────────────────────────────
 
-export function readResumeText(filePath: string): string {
-  const ext = filePath.toLowerCase().split(".").pop();
-  if (ext === "docx") {
-    // Lazy import to avoid loading mammoth when not needed
-    const mammoth = require("mammoth");
-    const result = mammoth.extractRawText({ path: filePath });
-    // mammoth returns a promise in Node.js — but we need sync here
-    // Actually mammoth.extractRawTextSync doesn't exist, so we'll handle this differently
-    throw new Error("Use readResumeTextAsync for .docx files");
-  }
-  throw new Error(`Unsupported resume format: .${ext}`);
-}
-
 export async function readResumeTextAsync(filePath: string): Promise<string> {
   const ext = filePath.toLowerCase().split(".").pop();
   if (ext === "docx") {
@@ -198,9 +185,6 @@ export async function readResumeTextAsync(filePath: string): Promise<string> {
   }
   throw new Error(`Unsupported resume format: .${ext}`);
 }
-
-// Alias for backward compatibility
-export const readDocxText = readResumeTextAsync;
 
 // ── LLM Provider Calls ─────────────────────────────────────────────────
 

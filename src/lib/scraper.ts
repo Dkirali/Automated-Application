@@ -19,7 +19,7 @@ export async function getBrowserContext(): Promise<BrowserContext> {
   });
 }
 
-export async function isEasyApply(page: Page): Promise<boolean> {
+async function isEasyApply(page: Page): Promise<boolean> {
   const selectors = [
     "button.jobs-apply-button:has-text('Easy Apply')",
     "button:has-text('Easy Apply')",
@@ -42,7 +42,7 @@ interface JobCard {
   url: string | null;
 }
 
-export async function parseJobCard(card: any): Promise<JobCard> {
+async function parseJobCard(card: any): Promise<JobCard> {
   async function tryText(...selectors: string[]): Promise<string> {
     for (const sel of selectors) {
       try {
@@ -126,7 +126,7 @@ export function buildSearchUrl(
   return `${LINKEDIN_JOBS_URL}?${params.toString()}`;
 }
 
-export async function getJobDescription(page: Page): Promise<string> {
+async function getJobDescription(page: Page): Promise<string> {
   const selectors = [
     ".jobs-description__content",
     ".jobs-description-content__text",
@@ -155,9 +155,9 @@ export interface ScrapedJob {
   job_description: string;
 }
 
-export type StopCheck = { isSet(): boolean };
-export type StatusCallback = (msg: string) => void;
-export type OnJobCallback = (job: ScrapedJob) => void;
+type StopCheck = { isSet(): boolean };
+type StatusCallback = (msg: string) => void;
+type OnJobCallback = (job: ScrapedJob) => void;
 
 export async function scrapeJobs(
   titles: string[],

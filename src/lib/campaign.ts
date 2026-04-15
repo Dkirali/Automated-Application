@@ -29,10 +29,6 @@ export function setAlert(msg: string | null): void {
   alert = msg;
 }
 
-export function isRunning(): boolean {
-  return worker !== null;
-}
-
 export function stopCampaign(): void {
   stopFlag = true;
   if (worker) {

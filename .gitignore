@@ -7,14 +7,8 @@ jobbot.db
 *.db-wal
 
 # Resume files
-resumes/*/
+resumes/
 !resumes/.gitkeep
-
-# Python
-__pycache__/
-*.pyc
-.pytest_cache/
-venv/
 
 # Next.js
 .next/
@@ -25,6 +19,9 @@ next-env.d.ts
 # Testing
 test-results/
 coverage/
+tests/e2e/test.db
+tests/e2e/test.db-shm
+tests/e2e/test.db-wal
 
 # OS
 .DS_Store
