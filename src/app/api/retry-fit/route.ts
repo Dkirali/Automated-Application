@@ -40,8 +40,8 @@ export async function POST(): Promise<NextResponse> {
             fitSummary: fit.raw,
             jdSummary: fit.jdSummary,
           });
-        } catch {
-          // non-fatal, skip to next
+        } catch (e) {
+          console.error(`[retry-fit] Job ${job.id} failed:`, e);
         }
       }
     } finally {

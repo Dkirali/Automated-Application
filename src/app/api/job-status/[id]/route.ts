@@ -10,5 +10,12 @@ export async function GET(
   if (!job) {
     return NextResponse.json({ status: "unknown" }, { status: 404 });
   }
-  return NextResponse.json({ status: job.status });
+  return NextResponse.json({
+    status: job.status,
+    ats_score: job.ats_score,
+    original_ats_score: job.original_ats_score,
+    keywords: job.keywords,
+    resume_path: job.resume_path,
+    model_used: job.model_used,
+  });
 }

@@ -16,7 +16,7 @@ export default async function ReviewPage({ params, searchParams }: PageProps) {
   const appId = Number(id);
   const job = getApplication(appId);
 
-  if (!job || !["pending", "reviewed"].includes(job.status)) {
+  if (!job || !["pending", "reviewed", "failed"].includes(job.status)) {
     redirect("/");
   }
 

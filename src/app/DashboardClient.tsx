@@ -290,16 +290,13 @@ export default function DashboardClient({
                   <label key={key} className={`model-option ${!isConfigured ? "not-configured" : ""}`}>
                     <input type="radio" name="preferred_model" value={key} defaultChecked={key === "auto"} disabled={!isConfigured} />
                     <span className="model-option-name">{label}</span>
-                    {key !== "auto" && isConfigured && (
+                    {key !== "auto" && isConfigured && usageCount > 0 && (
                       <div className="model-option-usage">
                         <span className="model-usage-bar">
                           <span className={`usage-fill ${pct >= 80 ? "high" : pct >= 50 ? "medium" : ""}`} style={{ width: `${pct}%` }} />
                         </span>
-                        <span className="usage-count">{usageCount} calls</span>
+                        <span className="usage-count">{usageCount}</span>
                       </div>
-                    )}
-                    {key === "auto" && (
-                      <span style={{ fontSize: "9px", color: "var(--clr-text-muted)", marginTop: "2px" }}>Uses best available</span>
                     )}
                   </label>
                 );
@@ -407,18 +404,6 @@ export default function DashboardClient({
                         <span className="badge badge-pending">Review →</span>
                       </div>
                     </a>
-                    {!isTailored && (
-                      <div style={{ padding: "0 12px 10px" }} onClick={(e) => e.stopPropagation()}>
-                        <form method="POST" action={`/api/retailor/${job.id}`}>
-                          <select name="model" className="model-select-inline" style={{ fontSize: "9px", padding: "2px 4px" }}>
-                            {Object.entries(availableModels).map(([key, label]) => (
-                              <option key={key} value={key}>{label}</option>
-                            ))}
-                          </select>
-                          <button type="submit" className="tailor-btn">⚡ Tailor Resume</button>
-                        </form>
-                      </div>
-                    )}
                   </div>
                 );
               })}
