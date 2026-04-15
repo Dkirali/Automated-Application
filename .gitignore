@@ -1,9 +1,30 @@
+# Environment & secrets
 .env
+
+# Database
 jobbot.db
+*.db-shm
+*.db-wal
+
+# Resume files
 resumes/*/
 !resumes/.gitkeep
+
+# Python
 __pycache__/
 *.pyc
 .pytest_cache/
 venv/
+
+# Next.js
+.next/
+node_modules/
+next-env.d.ts
+*.tsbuildinfo
+
+# Testing
+test-results/
+coverage/
+
+# OS
 .DS_Store
