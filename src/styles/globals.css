@@ -2045,7 +2045,7 @@ mark.kw-highlight {
 .fit-kw-chip { font-size: 9px; font-family: var(--font-hud); color: var(--clr-text-muted); border: 1px solid var(--clr-border); padding: 2px 6px; border-radius: 2px; letter-spacing: .3px; }
 
 /* ── Resume Panel redesign (review + detail) ── */
-.resume-panel { display: flex; flex-direction: column; min-height: 0; max-height: 100%; overflow: hidden; }
+.resume-panel { display: flex; flex-direction: column; min-height: 0; height: 560px; overflow: hidden; background: var(--clr-surface); border: 1px solid var(--clr-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
 .resume-panel-header { position: sticky; top: 0; z-index: 10; background: var(--clr-surface2); border-bottom: 1px solid var(--clr-border); padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; flex-shrink: 0; }
 .resume-panel-title { display: flex; align-items: center; gap: 8px; }
 .resume-panel-label { font-family: var(--font-hud); font-size: 9px; letter-spacing: 1.5px; color: var(--clr-text-muted); text-transform: uppercase; }

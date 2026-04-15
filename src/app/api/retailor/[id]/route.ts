@@ -52,7 +52,8 @@ export async function POST(
         resumePath: tailor.docxPath,
         modelUsed: tailor.modelUsed,
       });
-    } catch {
+    } catch (err) {
+      console.error(`[retailor] Tailoring failed for job ${appId}:`, err);
       updateApplication(appId, "failed");
     }
   })();

@@ -206,6 +206,7 @@ async function callProvider(
     try {
       return await fn();
     } catch (e: unknown) {
+      console.error(`[LLM] ${name} attempt ${attempt + 1} failed:`, e);
       const errStr = String(e).toLowerCase();
       const isRateLimit =
         errStr.includes("429") ||
