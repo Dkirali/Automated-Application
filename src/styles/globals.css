@@ -1444,6 +1444,7 @@ a:hover { text-decoration: underline; }
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-bottom: 24px;
+  align-items: start;
 }
 .review-panel {
   background: var(--clr-surface);
@@ -1452,8 +1453,7 @@ a:hover { text-decoration: underline; }
   box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
-  min-height: 420px;
-  max-height: 640px;
+  height: 560px;
   overflow: hidden;
 }
 .review-panel-header {
@@ -1968,21 +1968,25 @@ mark.kw-highlight {
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── Model Selector (campaign form) ── */
-.model-select-row { margin-top: 16px; }
-.model-select-row > .form-label { display: block; font-family: var(--font-hud); font-size: 10px; letter-spacing: 1px; color: var(--clr-text-muted); margin-bottom: 8px; text-transform: uppercase; }
-.model-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
-.model-option { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; background: var(--clr-surface); border: 1px solid var(--clr-border); border-radius: 4px; cursor: pointer; transition: border-color .15s, box-shadow .15s; position: relative; }
+.model-select-row { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--clr-border); }
+.model-select-row > .form-label { display: block; font-family: var(--font-hud); font-size: 10px; letter-spacing: 1px; color: var(--clr-text-muted); margin-bottom: 10px; text-transform: uppercase; }
+.model-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.model-option { display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: var(--clr-bg); border: 1px solid var(--clr-border); border-radius: var(--radius); cursor: pointer; transition: border-color .15s, box-shadow .15s; position: relative; white-space: nowrap; }
+.model-option:hover { border-color: rgba(0,212,255,.4); }
 .model-option:has(input:checked) { border-color: var(--clr-primary); box-shadow: var(--glow-primary); background: rgba(0,212,255,.05); }
 .model-option input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
-.model-option-name { font-size: 11px; color: var(--clr-text); font-weight: 600; }
-.model-option-usage { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
-.model-usage-bar { flex: 1; height: 3px; background: var(--clr-border); border-radius: 2px; overflow: hidden; }
+.model-option-name { font-size: 11px; color: var(--clr-text); font-weight: 600; font-family: var(--font-hud); letter-spacing: .3px; }
+.model-option-usage { display: flex; align-items: center; gap: 6px; }
+.model-usage-bar { width: 40px; height: 3px; background: var(--clr-border); border-radius: 2px; overflow: hidden; }
 .usage-fill { display: block; height: 100%; background: var(--clr-primary); border-radius: 2px; transition: width .4s ease; width: 0%; }
 .usage-fill.high { background: var(--clr-danger); }
 .usage-fill.medium { background: var(--clr-warning); }
-.usage-count { font-size: 9px; color: var(--clr-text-muted); font-family: var(--font-hud); white-space: nowrap; min-width: 48px; }
-.model-option.not-configured { opacity: .45; cursor: not-allowed; }
-.model-option.not-configured .model-option-name::after { content: " (no key)"; color: var(--clr-text-muted); font-weight: 400; }
+.usage-count { font-size: 9px; color: var(--clr-text-muted); font-family: var(--font-hud); white-space: nowrap; }
+.model-option.not-configured { opacity: .35; cursor: not-allowed; }
+.model-option.not-configured .model-option-name::after { content: " ✗"; color: var(--clr-text-muted); font-weight: 400; font-size: 9px; }
+
+/* ── Inline model selector on job cards ── */
+.model-select-inline { background: var(--clr-bg) !important; border: 1px solid var(--clr-border) !important; color: var(--clr-text) !important; font-family: var(--font-hud) !important; font-size: 10px !important; padding: 4px 8px !important; border-radius: var(--radius) !important; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%2300d4ff'/%3E%3C/svg%3E") !important; background-repeat: no-repeat !important; background-position: right 6px center !important; padding-right: 20px !important; cursor: pointer; }
 
 /* ── Sort / Filter bar (dashboard pending section) ── */
 .jobs-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-bottom: 12px; padding: 10px 14px; background: var(--clr-surface); border: 1px solid var(--clr-border); border-radius: 4px; }
@@ -2041,7 +2045,7 @@ mark.kw-highlight {
 .fit-kw-chip { font-size: 9px; font-family: var(--font-hud); color: var(--clr-text-muted); border: 1px solid var(--clr-border); padding: 2px 6px; border-radius: 2px; letter-spacing: .3px; }
 
 /* ── Resume Panel redesign (review + detail) ── */
-.resume-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.resume-panel { display: flex; flex-direction: column; min-height: 0; max-height: 100%; overflow: hidden; }
 .resume-panel-header { position: sticky; top: 0; z-index: 10; background: var(--clr-surface2); border-bottom: 1px solid var(--clr-border); padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; flex-shrink: 0; }
 .resume-panel-title { display: flex; align-items: center; gap: 8px; }
 .resume-panel-label { font-family: var(--font-hud); font-size: 9px; letter-spacing: 1.5px; color: var(--clr-text-muted); text-transform: uppercase; }

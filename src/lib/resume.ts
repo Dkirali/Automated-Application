@@ -169,6 +169,10 @@ export function stripMarkdown(text: string): string {
 
 export async function readResumeTextAsync(filePath: string): Promise<string> {
   const ext = filePath.toLowerCase().split(".").pop();
+  if (ext === "txt") {
+    const { readFileSync } = require("fs");
+    return readFileSync(filePath, "utf-8").trim();
+  }
   if (ext === "docx") {
     const mammoth = require("mammoth");
     const result = await mammoth.extractRawText({ path: filePath });
@@ -180,8 +184,13 @@ export async function readResumeTextAsync(filePath: string): Promise<string> {
     return (result.value as string).trim();
   }
   if (ext === "pdf") {
-    // PDF reading would use pdfjs or similar
-    throw new Error("PDF reading not yet implemented in Node.js port");
+    // pdf-parse has a bug where require() tries to load a test file.
+    // Import the core module directly to avoid it.
+    const pdfParse = require("pdf-parse/lib/pdf-parse");
+    const { readFileSync } = require("fs");
+    const buffer = readFileSync(filePath);
+    const data = await pdfParse(buffer);
+    return (data.text as string).trim();
   }
   throw new Error(`Unsupported resume format: .${ext}`);
 }
@@ -232,7 +241,7 @@ async function callLlm(
 
   // Provider helpers
   const groq = async (): Promise<string> => {
-    const Groq = require("groq").default || require("groq");
+    const Groq = require("groq-sdk");
     const client = new Groq({ apiKey: groqKey });
     const message = await client.chat.completions.create({
       model: "llama-3.3-70b-versatile",
@@ -360,6 +369,170 @@ async function callLlm(
   throw new Error("No API key set — add a Groq, OpenRouter, or Anthropic key in Settings");
 }
 
+// ── DOCX generation ───────────────────────────────────────────────────
+
+function isAllCapsSection(line: string): boolean {
+  const t = line.trim();
+  return t.length >= 3 && t === t.toUpperCase() && /[A-Z]/.test(t) && !/[a-z]/.test(t)
+    && !t.startsWith("•") && !t.startsWith("-") && !t.startsWith("–");
+}
+
+// Detect "Company | Location | Date" or "Role\tLocation | Date" patterns
+function isCompanyOrRoleLine(line: string): { company?: string; role?: string; locationDate?: string } | null {
+  // "Company Name | Location | Dates" or "Company Name"
+  const pipeMatch = line.match(/^(.+?)\s*\|\s*(.+?)\s*\|\s*(.+)$/);
+  if (pipeMatch) {
+    return { company: pipeMatch[1].trim(), locationDate: `${pipeMatch[2].trim()} | ${pipeMatch[3].trim()}` };
+  }
+  return null;
+}
+
+async function writeTailoredDocx(text: string, outputPath: string, jobTitle?: string): Promise<void> {
+  const {
+    Document, Packer, Paragraph, TextRun, AlignmentType,
+    TabStopPosition, TabStopType,
+  } = require("docx");
+  const { writeFileSync } = require("fs");
+
+  const FONT = "Calibri";
+  const SIZE_NAME = 28;       // 14pt
+  const SIZE_SUBTITLE = 22;   // 11pt
+  const SIZE_CONTACT = 18;    // 9pt
+  const SIZE_SECTION = 22;    // 11pt
+  const SIZE_BODY = 20;       // 10pt
+  const SIZE_COMPANY = 21;    // 10.5pt
+  const RIGHT_TAB = 9500;     // right-aligned tab position in twips
+
+  const children: any[] = [];
+
+  // ── Header: Name ──
+  children.push(new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 60 },
+    children: [new TextRun({ text: CANDIDATE_HEADER.name, bold: true, size: SIZE_NAME, font: FONT })],
+  }));
+
+  // ── Header: Job title subtitle ──
+  if (jobTitle) {
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 60 },
+      children: [new TextRun({ text: jobTitle, bold: true, size: SIZE_SUBTITLE, font: FONT })],
+    }));
+  }
+
+  // ── Header: Contact line ──
+  children.push(new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 200 },
+    children: [new TextRun({
+      text: `${CANDIDATE_HEADER.phone} \u2022 ${CANDIDATE_HEADER.email} \u2022 ${CANDIDATE_HEADER.linkedin} \u2022 ${CANDIDATE_HEADER.github}`,
+      size: SIZE_CONTACT, font: FONT, color: "555555",
+    })],
+  }));
+
+  // ── Parse body ──
+  const lines = text.split("\n");
+  let i = 0;
+
+  // Skip lines that are the candidate name/contact (LLM sometimes repeats them)
+  while (i < lines.length) {
+    const t = lines[i].trim().toLowerCase();
+    if (CONTACT_SKIP_PATTERNS.some((p) => t.includes(p.toLowerCase())) || t === "" || t === CANDIDATE_HEADER.name.toLowerCase()) {
+      i++;
+      continue;
+    }
+    break;
+  }
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    i++;
+
+    // Empty line → small spacer
+    if (!trimmed) {
+      children.push(new Paragraph({ spacing: { after: 40 }, children: [] }));
+      continue;
+    }
+
+    // ALL CAPS → section heading (bold, with bottom border effect via spacing)
+    if (isAllCapsSection(trimmed)) {
+      children.push(new Paragraph({
+        spacing: { before: 240, after: 80 },
+        children: [new TextRun({ text: trimmed, bold: true, size: SIZE_SECTION, font: FONT })],
+      }));
+      continue;
+    }
+
+    // "Company | Location | Dates" line
+    const parsed = isCompanyOrRoleLine(trimmed);
+    if (parsed && parsed.company) {
+      children.push(new Paragraph({
+        spacing: { before: 160, after: 20 },
+        children: [new TextRun({ text: parsed.company, size: SIZE_COMPANY, font: FONT })],
+      }));
+
+      // Next line is likely the role title — peek ahead
+      if (i < lines.length && lines[i].trim() && !lines[i].trim().startsWith("•") && !lines[i].trim().startsWith("-") && !isAllCapsSection(lines[i].trim())) {
+        const roleLine = lines[i].trim();
+        i++;
+        // Role with tab-aligned location/date
+        children.push(new Paragraph({
+          tabStops: [{ type: TabStopType.RIGHT, position: RIGHT_TAB }],
+          spacing: { after: 60 },
+          children: [
+            new TextRun({ text: roleLine, bold: true, size: SIZE_BODY, font: FONT }),
+            new TextRun({ text: `\t${parsed.locationDate}`, size: SIZE_BODY, font: FONT, color: "555555" }),
+          ],
+        }));
+      } else {
+        // No separate role line — put location on same line
+        children.push(new Paragraph({
+          tabStops: [{ type: TabStopType.RIGHT, position: RIGHT_TAB }],
+          spacing: { after: 60 },
+          children: [
+            new TextRun({ text: parsed.company, bold: true, size: SIZE_BODY, font: FONT }),
+            new TextRun({ text: `\t${parsed.locationDate}`, size: SIZE_BODY, font: FONT, color: "555555" }),
+          ],
+        }));
+      }
+      continue;
+    }
+
+    // Bullet points (• or -)
+    if (trimmed.startsWith("•") || trimmed.startsWith("-") || trimmed.startsWith("–")) {
+      const bulletText = trimmed.replace(/^[•\-–]\s*/, "");
+      children.push(new Paragraph({
+        bullet: { level: 0 },
+        spacing: { after: 40 },
+        children: [new TextRun({ text: bulletText, size: SIZE_BODY, font: FONT })],
+      }));
+      continue;
+    }
+
+    // Regular paragraph
+    children.push(new Paragraph({
+      spacing: { after: 40 },
+      children: [new TextRun({ text: trimmed, size: SIZE_BODY, font: FONT })],
+    }));
+  }
+
+  const doc = new Document({
+    sections: [{
+      properties: {
+        page: {
+          margin: { top: 720, right: 720, bottom: 720, left: 720 },
+        },
+      },
+      children,
+    }],
+  });
+
+  const buffer = await Packer.toBuffer(doc);
+  writeFileSync(outputPath, buffer);
+}
+
 // ── Public functions ────────────────────────────────────────────────────
 
 export async function tailorResume(
@@ -367,7 +540,8 @@ export async function tailorResume(
   jobDescription: string,
   masterResumePath: string,
   existingKeywords?: string[],
-  preferredModel: string = "auto"
+  preferredModel: string = "auto",
+  jobTitle?: string
 ): Promise<{
   keywords: string[];
   keywordsStr: string;
@@ -399,13 +573,16 @@ export async function tailorResume(
     await readResumeTextAsync(masterResumePath)
   );
 
-  const { mkdirSync } = require("fs");
+  const { mkdirSync, writeFileSync } = require("fs");
   const { join } = require("path");
   const jobDir = join(RESUMES_DIR, String(jobId));
   mkdirSync(jobDir, { recursive: true });
 
+  const txtPath = join(jobDir, "tailored.txt");
+  writeFileSync(txtPath, tailoredText, "utf-8");
+
   const docxPath = join(jobDir, "tailored.docx");
-  // TODO: write docx and export PDF (port write_tailored_docx and export_pdf)
+  await writeTailoredDocx(tailoredText, docxPath, jobTitle);
 
   return {
     keywords,

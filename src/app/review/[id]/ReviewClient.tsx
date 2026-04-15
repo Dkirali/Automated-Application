@@ -71,12 +71,24 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
   const [resumeHtml, setResumeHtml] = useState<string | null>(null);
   const [resumeError, setResumeError] = useState(false);
   const [kwMatchCount, setKwMatchCount] = useState<number | null>(null);
+  const [isTailoring, setIsTailoring] = useState(tailoringInProgress);
+  const [currentJob, setCurrentJob] = useState(job);
   const resumeRef = useRef<HTMLDivElement>(null);
 
   const scoreClass = (s: number) => (s >= 70 ? "high" : s >= 40 ? "medium" : "low");
 
-  const orig = job.original_ats_score || 0;
-  const tail = job.ats_score || 0;
+  const handleRetailor = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    setIsTailoring(true);
+    setResumeHtml(null);
+    setResumeError(false);
+    setKwMatchCount(null);
+    await fetch(`/api/retailor/${currentJob.id}`, { method: "POST", body: formData });
+  };
+
+  const orig = currentJob.original_ats_score || 0;
+  const tail = currentJob.ats_score || 0;
   const delta = tail - orig;
   const circ = 125.66;
   const origDash = Math.max((orig / 100) * circ, 2);
@@ -99,25 +111,37 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
 
   // Poll for tailoring completion
   useEffect(() => {
-    if (!tailoringInProgress) return;
+    if (!isTailoring) return;
     const interval = setInterval(() => {
-      fetch(`/api/job-status/${job.id}`)
+      fetch(`/api/job-status/${currentJob.id}`)
         .then((r) => r.json())
         .then((d) => {
           if (d.status !== "pending") {
             clearInterval(interval);
-            location.reload();
+            setIsTailoring(false);
+            setCurrentJob((prev: Record<string, any>) => ({
+              ...prev,
+              status: d.status,
+              ats_score: d.ats_score ?? prev.ats_score,
+              original_ats_score: d.original_ats_score ?? prev.original_ats_score,
+              keywords: d.keywords ?? prev.keywords,
+              resume_path: d.resume_path ?? prev.resume_path,
+              model_used: d.model_used ?? prev.model_used,
+            }));
+            setResumeHtml(null);
+            setResumeError(false);
+            setKwMatchCount(null);
           }
         })
         .catch(() => {});
     }, 4000);
     return () => clearInterval(interval);
-  }, [tailoringInProgress, job.id]);
+  }, [isTailoring, currentJob.id]);
 
   // Load resume text
   useEffect(() => {
-    if (tailoringInProgress || !job.resume_path) return;
-    fetch(`/api/resume-text/${job.id}`)
+    if (isTailoring || !currentJob.resume_path) return;
+    fetch(`/api/resume-text/${currentJob.id}`)
       .then((r) => r.json())
       .then((data) => {
         setResumeHtml(renderMarkdown(data.text || ""));
@@ -129,7 +153,7 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
         }, 100);
       })
       .catch(() => setResumeError(true));
-  }, [job.id, job.resume_path, tailoringInProgress]);
+  }, [currentJob.id, currentJob.resume_path, isTailoring]);
 
   return (
     <div className="container">
@@ -147,13 +171,13 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
       <div className="review-header">
         <div className="review-header-body">
           <div className="review-header-top">
-            <h1 className="review-title">{job.title}</h1>
+            <h1 className="review-title">{currentJob.title}</h1>
             {fit.fit_score > 0 && (
               <span className={`fit-score-badge fit-score--${scoreClass(fit.fit_score)}`}>{fit.fit_score}% fit</span>
             )}
           </div>
-          <p className="review-meta">{job.company}{job.location ? ` · ${job.location}` : ""}</p>
-          <a href={job.url} target="_blank" rel="noopener noreferrer" className="review-link">View on LinkedIn ↗</a>
+          <p className="review-meta">{currentJob.company}{currentJob.location ? ` · ${currentJob.location}` : ""}</p>
+          <a href={currentJob.url} target="_blank" rel="noopener noreferrer" className="review-link">View on LinkedIn ↗</a>
         </div>
 
         {/* Dual ATS Rings */}
@@ -233,10 +257,10 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
                 {fit.jd_keywords.split(",").map((kw, i) => kw.trim() && <span key={i} className="jd-keyword-chip">{kw.trim()}</span>)}
               </div>
             )}
-            {job.job_description ? (
+            {currentJob.job_description ? (
               <details className="jd-full-toggle">
                 <summary>Show full description</summary>
-                <pre className="jd-text">{job.job_description}</pre>
+                <pre className="jd-text">{currentJob.job_description}</pre>
               </details>
             ) : !fit.jd_summary && (
               <p className="empty-note">No description available.</p>
@@ -249,27 +273,27 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
           <div className="resume-panel-header">
             <div className="resume-panel-title">
               <span className="panel-label">TAILORED RESUME</span>
-              {job.model_used && <span className="model-badge tailored-model-badge">{job.model_used}</span>}
+              {currentJob.model_used && <span className="model-badge tailored-model-badge">{currentJob.model_used}</span>}
             </div>
             <div className="resume-panel-actions">
-              {job.keywords && (
+              {currentJob.keywords && (
                 <span className="kw-match-badge" title="Keywords matched in resume">
-                  <span>{kwMatchCount ?? "—"}</span>&thinsp;/&thinsp;{job.keywords.split(",").length} kw
+                  <span>{kwMatchCount ?? "—"}</span>&thinsp;/&thinsp;{currentJob.keywords.split(",").length} kw
                 </span>
               )}
-              {job.resume_path && <a href={`/api/download/${job.id}`} className="btn-download">↓ PDF</a>}
-              <form method="POST" action={`/api/retailor/${job.id}`} className="retailor-form-inline">
+              {currentJob.resume_path && <a href={`/api/download/${currentJob.id}`} className="btn-download">↓ PDF</a>}
+              <form onSubmit={handleRetailor} className="retailor-form-inline">
                 <select name="model" className="model-select-inline" title="Choose LLM model">
                   {Object.entries(availableModels).map(([key, label]) => (
                     <option key={key} value={key}>{label}</option>
                   ))}
                 </select>
-                <button type="submit" className="btn-retailor">⟳ Re-tailor</button>
+                <button type="submit" className="btn-retailor" disabled={isTailoring}>⟳ Re-tailor</button>
               </form>
             </div>
           </div>
           <div className="resume-body">
-            {tailoringInProgress ? (
+            {isTailoring ? (
               <>
                 <div>
                   {[55, 80, 70, 65, 90, 50, 75, 60].map((w, i) => <div key={i} className="skeleton-line" style={{ width: `${w}%` }} />)}
@@ -279,7 +303,7 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
                   Tailoring resume… this takes about 30–60 seconds.
                 </div>
               </>
-            ) : !job.resume_path ? (
+            ) : !currentJob.resume_path ? (
               <div className="resume-not-tailored">
                 <div className="resume-not-tailored-icon">◈</div>
                 <div className="resume-not-tailored-msg">Resume not tailored yet</div>
@@ -300,10 +324,10 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
 
       {/* Action Buttons */}
       <div className="review-actions">
-        <form method="POST" action={`/api/apply/${job.id}`}>
+        <form method="POST" action={`/api/apply/${currentJob.id}`}>
           <button type="submit" className="btn-apply">✓ Apply Now</button>
         </form>
-        <form method="POST" action={`/api/discard/${job.id}`}>
+        <form method="POST" action={`/api/discard/${currentJob.id}`}>
           <button type="submit" className="btn-discard">✗ Discard</button>
         </form>
         <a href="/" className="btn-back-dash">Back to Dashboard</a>

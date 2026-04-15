@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getApplication, getConfig, getConn, updateApplication } from "@/lib/db";
-import { tailorResume, generateFitSummary } from "@/lib/resume";
+import { tailorResume } from "@/lib/resume";
 
 export async function POST(
   request: NextRequest,
@@ -27,7 +27,7 @@ export async function POST(
   updateApplication(appId, "pending");
   const db = getConn();
   db.prepare(
-    "UPDATE applications SET resume_path=NULL, ats_score=NULL, original_ats_score=NULL, fit_summary=NULL, jd_summary=NULL, model_used=NULL WHERE id=?"
+    "UPDATE applications SET resume_path=NULL, ats_score=NULL, original_ats_score=NULL, model_used=NULL WHERE id=?"
   ).run(appId);
 
   // Run tailoring in background
@@ -42,7 +42,8 @@ export async function POST(
         jd,
         masterPath,
         storedKeywords.length ? storedKeywords : undefined,
-        preferredModel
+        preferredModel,
+        job.title
       );
       updateApplication(appId, "reviewed", {
         atsScore: tailor.atsScore,
@@ -53,22 +54,8 @@ export async function POST(
       });
     } catch {
       updateApplication(appId, "failed");
-      return;
-    }
-
-    try {
-      const fit = await generateFitSummary(jd, masterPath);
-      updateApplication(appId, "reviewed", {
-        fitSummary: fit.raw,
-        jdSummary: fit.jdSummary,
-      });
-    } catch {
-      // non-fatal
     }
   })();
 
-  return NextResponse.redirect(
-    new URL(`/review/${appId}?tailoring=1`, request.url),
-    303
-  );
+  return NextResponse.json({ ok: true, id: appId });
 }

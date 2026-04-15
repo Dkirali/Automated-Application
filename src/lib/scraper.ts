@@ -182,7 +182,41 @@ export async function scrapeJobs(
       const pageNum = Math.floor(pageStart / PAGE_SIZE) + 1;
       update(`Opening LinkedIn page ${pageNum}: ${searchUrl.slice(0, 80)}…`);
       await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
-      await page.waitForTimeout(4000);
+      await page.waitForTimeout(3000);
+
+      // Fix LinkedIn location duplication: clear auto-resolved location and
+      // re-enter the original text, then dismiss the distance filter pill
+      if (filters.location_text && pageStart === 0) {
+        try {
+          // Clear the location input and type the clean value
+          const locInput = page.locator("input[aria-label*='city' i], input[aria-label*='location' i], input#jobs-search-box-location-id-ember").first();
+          if (await locInput.count()) {
+            await locInput.click({ clickCount: 3 });
+            await locInput.fill(filters.location_text);
+            await page.waitForTimeout(500);
+            await page.keyboard.press("Enter");
+            await page.waitForTimeout(3000);
+          }
+
+          // Dismiss any distance filter pill LinkedIn auto-adds
+          const distancePill = page.locator("button[aria-label*='distance' i], button[aria-label*='radius' i]").first();
+          if (await distancePill.count()) {
+            await distancePill.click();
+            await page.waitForTimeout(500);
+            // Look for "Cancel" or clear option inside the dropdown
+            const clearBtn = page.locator("button:has-text('Cancel'), button:has-text('Clear')").first();
+            if (await clearBtn.count()) {
+              await clearBtn.click();
+              await page.waitForTimeout(1000);
+            } else {
+              await page.keyboard.press("Escape");
+            }
+          }
+        } catch {
+          // Non-fatal — proceed with whatever LinkedIn gave us
+        }
+      }
+      await page.waitForTimeout(1000);
 
       // Load cards by scrolling
       for (let i = 0; i < 8; i++) {
