@@ -32,7 +32,12 @@ export async function POST(request: NextRequest) {
     date_posted: datePosted,
   };
 
-  const campaignId = createCampaign(titlesRaw, titlesRaw, locationText, preferredModel);
+  const campaignId = createCampaign({
+    name: titlesRaw,
+    titles: titlesRaw,
+    locations: locationText,
+    preferredModel,
+  });
 
   setAlert(null);
   // Run campaign in background (not awaited)

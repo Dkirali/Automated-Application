@@ -77,14 +77,14 @@ export async function runCampaign(
         return;
       }
 
-      const appId = insertApplication(
+      const appId = insertApplication({
         campaignId,
-        job.company || "Unknown",
-        job.title || "Unknown",
-        job.location || "",
-        job.url,
-        job.job_description || ""
-      );
+        company: job.company || "Unknown",
+        title: job.title || "Unknown",
+        location: job.location || "",
+        url: job.url,
+        jobDescription: job.job_description || "",
+      });
       if (!appId) return; // duplicate
 
       jobsFound++;
