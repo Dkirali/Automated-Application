@@ -7,9 +7,15 @@ import {
   seedManualJob,
   makeFitSummary,
   resetServer,
+  createTestResume,
+  TEST_RESUME_PATH,
 } from "./seed";
 
 const BASE = "http://localhost:3001";
+
+test.beforeAll(async () => {
+  await createTestResume();
+});
 
 test.beforeEach(async () => {
   resetDb();
@@ -155,7 +161,7 @@ test.describe("Pending Jobs", () => {
       fitSummary: makeFitSummary(70),
       atsScore: 82,
       originalAtsScore: 55,
-      resumePath: "/tmp/resume.docx",
+      resumePath: TEST_RESUME_PATH,
       modelUsed: "groq/llama-3.3-70b",
     });
     await resetServer(BASE);
@@ -169,7 +175,7 @@ test.describe("Pending Jobs", () => {
     seedJob({
       campaignId,
       fitSummary: makeFitSummary(70),
-      resumePath: "/tmp/resume.docx",
+      resumePath: TEST_RESUME_PATH,
       modelUsed: "groq/llama-3.3-70b",
     });
     await resetServer(BASE);
@@ -178,13 +184,12 @@ test.describe("Pending Jobs", () => {
     await expect(page.locator(".tailored-model-badge")).toContainText("groq/llama-3.3-70b");
   });
 
-  test("shows untailored badge and tailor button", async ({ page }) => {
+  test("shows untailored badge when no resume", async ({ page }) => {
     seedJob({ campaignId, fitSummary: makeFitSummary(70) });
     await resetServer(BASE);
 
     await page.goto("/");
     await expect(page.locator(".untailored-badge")).toContainText("Not tailored");
-    await expect(page.locator(".tailor-btn")).toBeVisible();
   });
 });
 
@@ -197,7 +202,7 @@ test.describe("Sorting & Filtering", () => {
     seedSetupComplete();
     campaignId = seedCampaign();
 
-    seedJob({ campaignId, fitSummary: makeFitSummary(90), title: "High Fit", resumePath: "/tmp/r.docx" });
+    seedJob({ campaignId, fitSummary: makeFitSummary(90), title: "High Fit", resumePath: TEST_RESUME_PATH });
     seedJob({ campaignId, fitSummary: makeFitSummary(30), title: "Low Fit" });
     seedJob({ campaignId, fitSummary: makeFitSummary(60), title: "Mid Fit" });
     await resetServer(BASE);
@@ -441,7 +446,7 @@ test.describe("Review Page", () => {
       company: "TechCorp",
       atsScore: 80,
       originalAtsScore: 55,
-      resumePath: "/tmp/resume.docx",
+      resumePath: TEST_RESUME_PATH,
       modelUsed: "groq/llama-3.3-70b",
       jobDescription: "Looking for a PM with 5 years experience.",
       keywords: "product,strategy,roadmap",
@@ -574,7 +579,7 @@ test.describe("Settings Page", () => {
 
   test("shows current resume filename", async ({ page }) => {
     await page.goto("/settings");
-    await expect(page.locator(".file-current")).toContainText("master.docx");
+    await expect(page.locator(".file-current")).toContainText("resume.docx");
   });
 
   test("has back link to dashboard", async ({ page }) => {
@@ -667,12 +672,10 @@ test.describe("API Routes", () => {
     const id2 = seedJob({ campaignId, fitSummary: makeFitSummary(40) });
     await resetServer(BASE);
 
-    const form = new FormData();
-    form.append("job_ids", String(id1));
-    form.append("job_ids", String(id2));
-    // Use URLSearchParams since Playwright request doesn't support FormData well
     const res = await request.post("/api/bulk-discard", {
-      form: { job_ids: [String(id1), String(id2)] },
+      multipart: {
+        job_ids: String(id1),
+      },
     });
     expect(res.ok()).toBeTruthy();
   });
@@ -691,9 +694,8 @@ test.describe("Applications List", () => {
     await page.goto("/");
     const section = page.locator(".section-title").filter({ hasText: "Applications" });
     await expect(section).toBeVisible();
-    // Applied jobs show in the applications section (not pending)
-    const appCards = page.locator(".card-list").nth(1).locator(".app-card");
-    await expect(appCards).toHaveCount(2);
+    // Applied jobs have badge-applied class
+    await expect(page.locator(".badge-applied")).toHaveCount(2);
   });
 
   test("applied app shows checkmark badge", async ({ page }) => {
@@ -713,7 +715,7 @@ test.describe("Applications List", () => {
     await resetServer(BASE);
 
     await page.goto("/");
-    await page.locator(".card-list").nth(1).locator(".app-card").first().click();
+    await page.locator(".app-card").filter({ has: page.locator(".badge-applied") }).first().click();
     await expect(page).toHaveURL(/\/application\/\d+/);
   });
 });

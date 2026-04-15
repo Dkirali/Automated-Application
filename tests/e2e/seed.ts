@@ -1,7 +1,30 @@
 import Database from "better-sqlite3";
 import { join } from "path";
+import { existsSync, writeFileSync } from "fs";
+import { Document, Packer, Paragraph, TextRun } from "docx";
 
 const DB_PATH = join(__dirname, "test.db");
+export const TEST_RESUME_PATH = join(__dirname, "fixtures", "resume.docx");
+
+export async function createTestResume(): Promise<void> {
+  if (existsSync(TEST_RESUME_PATH)) return;
+  const doc = new Document({
+    sections: [
+      {
+        children: [
+          new Paragraph({
+            children: [new TextRun("Test User - Software Engineer")],
+          }),
+          new Paragraph({
+            children: [new TextRun("Skills: TypeScript, React, Node.js")],
+          }),
+        ],
+      },
+    ],
+  });
+  const buf = await Packer.toBuffer(doc);
+  writeFileSync(TEST_RESUME_PATH, buf);
+}
 
 function getDb(): Database.Database {
   const db = new Database(DB_PATH);
@@ -27,7 +50,7 @@ export function seedSetupComplete(): void {
   ins.run("name", "Test User");
   ins.run("email", "test@example.com");
   ins.run("phone", "+1234567890");
-  ins.run("master_resume_path", "/tmp/master.docx");
+  ins.run("master_resume_path", TEST_RESUME_PATH);
   db.close();
 }
 
@@ -118,7 +141,7 @@ export function seedManualJob(campaignId: number, opts: { company?: string; titl
 }
 
 export function makeFitSummary(score: number): string {
-  return `SCORE: ${score}\nVERDICT: Good match for the role\nSTRENGTHS: TypeScript, React, Node.js\nGAPS: None`;
+  return `FIT_SCORE: ${score}\nVERDICT: Good match for the role\nSTRENGTHS: TypeScript, React, Node.js\nGAPS: None`;
 }
 
 export async function resetServer(baseURL: string): Promise<void> {
