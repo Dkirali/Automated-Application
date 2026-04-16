@@ -3,7 +3,6 @@ import {
   isSetupComplete,
   getActiveCampaign,
   getAllApplications,
-  getManualQueue,
   getPendingJobs,
   getAllCampaigns,
   getConfig,
@@ -24,13 +23,12 @@ export default function Dashboard() {
 
   const campaign = getActiveCampaign();
   const applications = getAllApplications();
-  const manual = getManualQueue();
   const pending = getPendingJobs();
   const campaigns = getAllCampaigns();
 
   const stats = {
     applied: applications.filter((a) => a.status === "applied").length,
-    manual: manual.length,
+    manual: pending.filter((p) => !p.easy_apply).length,
     status: campaign?.status || "idle",
   };
 
@@ -77,7 +75,6 @@ export default function Dashboard() {
       activeModel={getLastModelUsed()}
       pendingJobs={pendingWithFit}
       applications={applications}
-      manualQueue={manual}
       campaigns={campaigns}
       alert={getAlert()}
       availableModels={AVAILABLE_MODELS}

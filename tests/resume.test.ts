@@ -5,9 +5,107 @@ import {
   calculateAtsScore,
   parseFitScore,
   parseFitField,
+  parseFitCategories,
   stripMarkdown,
   matchesKeyword,
+  extractMasterFacts,
+  validateTailoredResume,
+  normalizeDashes,
+  parseCandidateHeader,
 } from "@/lib/resume";
+
+const MASTER_SAMPLE = `Doruk Kirali
+Product Operations Manager
+0532 286 04 61 • kiralidoruk@gmail.com
+
+PROFESSIONAL EXPERIENCE
+
+Styx Intelligence
+Product Operations ManagerVancouver, Canada | Sep 2021 – Jan 2026
+Led product vision.
+Ran experiments.
+
+Ingram Micro
+Senior Sales Support (Product & Category Management)Toronto, Canada | Dec 2018 – Jan 2021
+Owned Dell portfolio.
+
+Mosaic North America
+Retail Marketing CoordinatorToronto, Canada | Aug 2018 – Oct 2018
+Gathered insights.
+
+Additional Experience
+
+Hometex & Floorex
+Sales InternToronto, Canada | Jun 2015 – Aug 2015
+Supported vendor acquisition.
+
+Coca‑Cola Bottling
+Marketing & Sales InternIstanbul, Turkey | Jun 2014 – Aug 2014
+Assisted in product development.
+
+EDUCATION
+
+Brainstation
+Web Development BootcampToronto, Canada | 2020 – 2021
+
+University of Guelph
+Bachelor of Marketing ManagementGuelph, Canada | 2013 – 2017
+
+SKILLS
+Product Vision • Research • Agile
+
+CERTIFICATES
+Udemy — AI Coder: Vibe Coder to Agentic Engineer in 3 Weeks
+Udemy — AI Engineer Agentic Track: The Complete Agent & MCP Course
+
+LANGUAGES
+Turkish – Native
+English – Native
+`;
+
+const VALID_TAILORED = `PROFESSIONAL EXPERIENCE
+
+Styx Intelligence | Vancouver, Canada | Sep 2021 – Jan 2026
+Product Operations Manager
+• Led product vision and roadmap.
+
+Ingram Micro | Toronto, Canada | Dec 2018 – Jan 2021
+Senior Sales Support (Product & Category Management)
+• Owned Dell portfolio.
+
+Mosaic North America | Toronto, Canada | Aug 2018 – Oct 2018
+Retail Marketing Coordinator
+• Gathered insights.
+
+ADDITIONAL EXPERIENCE
+
+Hometex & Floorex | Toronto, Canada | Jun 2015 – Aug 2015
+Sales Intern
+• Supported vendor acquisition.
+
+Coca‑Cola Bottling | Istanbul, Turkey | Jun 2014 – Aug 2014
+Marketing & Sales Intern
+• Assisted in product development.
+
+EDUCATION
+
+Brainstation | Toronto, Canada | 2020 – 2021
+Web Development Bootcamp
+
+University of Guelph | Guelph, Canada | 2013 – 2017
+Bachelor of Marketing Management
+
+SKILLS
+Product Vision • Research • Agile
+
+CERTIFICATES
+Udemy — AI Coder: Vibe Coder to Agentic Engineer in 3 Weeks
+Udemy — AI Engineer Agentic Track: The Complete Agent & MCP Course
+
+LANGUAGES
+Turkish – Native
+English – Native
+`;
 
 describe("extractKeywordsFromResponse", () => {
   it("extracts comma-separated keywords", () => {
@@ -99,6 +197,244 @@ describe("parseFitField", () => {
   });
 });
 
+describe("normalizeDashes", () => {
+  it("converts hyphens between month-year ranges to en-dashes", () => {
+    expect(normalizeDashes("Sep 2021 - Jan 2026")).toBe("Sep 2021 – Jan 2026");
+    expect(normalizeDashes("Aug 2018 - Oct 2018")).toBe("Aug 2018 – Oct 2018");
+  });
+
+  it("converts hyphens between year-only ranges to en-dashes", () => {
+    expect(normalizeDashes("2020 - 2021")).toBe("2020 – 2021");
+  });
+
+  it("leaves existing en-dashes untouched", () => {
+    expect(normalizeDashes("Sep 2021 – Jan 2026")).toBe("Sep 2021 – Jan 2026");
+  });
+
+  it("does not rewrite hyphens outside date patterns", () => {
+    expect(normalizeDashes("e-commerce site")).toBe("e-commerce site");
+  });
+});
+
+describe("extractMasterFacts", () => {
+  it("parses all three main roles with correct dates", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    expect(facts.roles).toHaveLength(3);
+    expect(facts.roles[0]).toMatchObject({
+      company: "Styx Intelligence",
+      role: "Product Operations Manager",
+      location: "Vancouver, Canada",
+      dates: "Sep 2021 – Jan 2026",
+    });
+    expect(facts.roles[1]).toMatchObject({
+      company: "Ingram Micro",
+      dates: "Dec 2018 – Jan 2021",
+    });
+    expect(facts.roles[2]).toMatchObject({
+      company: "Mosaic North America",
+      dates: "Aug 2018 – Oct 2018",
+    });
+  });
+
+  it("parses additional-experience roles separately", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    expect(facts.additionalRoles).toHaveLength(2);
+    expect(facts.additionalRoles[0].company).toBe("Hometex & Floorex");
+    expect(facts.additionalRoles[0].dates).toBe("Jun 2015 – Aug 2015");
+    expect(facts.additionalRoles[1].company).toBe("Coca‑Cola Bottling");
+  });
+
+  it("parses education entries", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    expect(facts.education).toHaveLength(2);
+    expect(facts.education[0].school).toBe("Brainstation");
+    expect(facts.education[1].school).toBe("University of Guelph");
+  });
+
+  it("parses languages", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    expect(facts.languages).toContain("Turkish");
+    expect(facts.languages).toContain("English");
+  });
+
+  it("parses tab-separated role lines (mammoth DOCX extraction format)", () => {
+    // mammoth extracts tabbed role lines as "Role\tLocation | Dates"
+    const tabbedMaster = `Doruk Kirali
+Product Operations Manager
+0532 286 04 61 • kiralidoruk@gmail.com
+
+PROFESSIONAL EXPERIENCE
+
+Styx Intelligence
+Product Operations Manager\tVancouver, Canada | Sep 2021 – Jan 2026
+Led product vision.
+
+Ingram Micro
+Senior Sales Support (Product & Category Management)\tToronto, Canada | Dec 2018 – Jan 2021
+Owned Dell portfolio.
+
+Mosaic North America
+Retail Marketing Coordinator\tToronto, Canada | Aug 2018 – Oct 2018
+Gathered insights.
+
+Additional Experience
+
+Coca‑Cola Bottling
+Marketing & Sales Intern\tIstanbul, Turkey | Jun 2014 – Aug 2014
+Assisted.
+
+EDUCATION
+
+Brainstation
+Web Development Bootcamp\tToronto, Canada | 2020 – 2021
+
+SKILLS
+Product Vision
+
+CERTIFICATES
+Udemy — AI Coder: Vibe Coder to Agentic Engineer in 3 Weeks
+Udemy — AI Engineer Agentic Track: The Complete Agent & MCP Course
+
+LANGUAGES
+Turkish
+English
+`;
+    const facts = extractMasterFacts(tabbedMaster);
+    expect(facts.roles[0]).toMatchObject({
+      company: "Styx Intelligence",
+      role: "Product Operations Manager",
+      location: "Vancouver, Canada",
+      dates: "Sep 2021 – Jan 2026",
+    });
+    expect(facts.roles[1].role).toBe(
+      "Senior Sales Support (Product & Category Management)"
+    );
+    expect(facts.roles[2].role).toBe("Retail Marketing Coordinator");
+    expect(facts.additionalRoles[0].role).toBe("Marketing & Sales Intern");
+  });
+});
+
+describe("validateTailoredResume", () => {
+  it("accepts a well-formed tailored resume", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    const result = validateTailoredResume(VALID_TAILORED, facts);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects output with a REFERENCES section", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    const withRefs = VALID_TAILORED + "\nREFERENCES\nJim Virgin, Ingram Micro\n";
+    const result = validateTailoredResume(withRefs, facts);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(" ")).toMatch(/REFERENCE/i);
+    }
+  });
+
+  it("rejects output with swapped dates between roles", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    // swap Ingram and Mosaic dates
+    const swapped = VALID_TAILORED
+      .replace("Ingram Micro | Toronto, Canada | Dec 2018 – Jan 2021", "Ingram Micro | Toronto, Canada | Aug 2018 – Oct 2018")
+      .replace("Mosaic North America | Toronto, Canada | Aug 2018 – Oct 2018", "Mosaic North America | Toronto, Canada | Dec 2018 – Jan 2021");
+    const result = validateTailoredResume(swapped, facts);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects output missing a role", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    const missing = VALID_TAILORED.replace(/Hometex & Floorex[\s\S]*?Supported vendor acquisition\./, "");
+    const result = validateTailoredResume(missing, facts);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects output missing the Languages section", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    const noLang = VALID_TAILORED.replace(/LANGUAGES[\s\S]*$/, "");
+    const result = validateTailoredResume(noLang, facts);
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects output missing both mandatory Udemy certificates", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    const noUdemy = VALID_TAILORED.replace(/Udemy[^\n]*\n/g, "");
+    const result = validateTailoredResume(noUdemy, facts);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("parseCandidateHeader", () => {
+  const fullHeaderText = `Jane Doe
+Senior Engineer
++1 (555) 123-4567 • jane@example.com • linkedin.com/in/janedoe • github.com/janedoe
+
+PROFESSIONAL EXPERIENCE
+
+Acme Corp
+Staff Engineer | San Francisco, USA | Jan 2022 – Dec 2025
+Built things.
+`;
+
+  it("extracts all contact fields when present", () => {
+    const facts = extractMasterFacts(fullHeaderText);
+    const header = parseCandidateHeader(fullHeaderText, facts);
+    expect(header.name).toBe("Jane Doe");
+    expect(header.email).toBe("jane@example.com");
+    expect(header.phone).toContain("555");
+    expect(header.linkedin).toContain("linkedin.com/in/janedoe");
+    expect(header.github).toContain("github.com/janedoe");
+  });
+
+  it("derives headline from the most recent role (first in PROFESSIONAL EXPERIENCE)", () => {
+    const facts = extractMasterFacts(fullHeaderText);
+    const header = parseCandidateHeader(fullHeaderText, facts);
+    expect(header.headline).toBe("Staff Engineer");
+  });
+
+  it("skips missing optional fields (no phone, no github)", () => {
+    const text = `Bob Smith
+Manager
+bob@example.com • linkedin.com/in/bob
+
+PROFESSIONAL EXPERIENCE
+
+Co
+Role | City, Country | Jan 2020 – Dec 2024
+Did work.
+`;
+    const facts = extractMasterFacts(text);
+    const header = parseCandidateHeader(text, facts);
+    expect(header.name).toBe("Bob Smith");
+    expect(header.email).toBe("bob@example.com");
+    expect(header.linkedin).toContain("linkedin.com/in/bob");
+    expect(header.phone).toBeUndefined();
+    expect(header.github).toBeUndefined();
+  });
+
+  it("returns undefined headline when no roles exist", () => {
+    const text = `Solo Candidate
+solo@example.com
+
+EDUCATION
+
+School
+Degree | City, Country | 2020 – 2024
+`;
+    const facts = extractMasterFacts(text);
+    const header = parseCandidateHeader(text, facts);
+    expect(header.headline).toBeUndefined();
+  });
+
+  it("parses the real master-style header (bullet-separated contact line)", () => {
+    const facts = extractMasterFacts(MASTER_SAMPLE);
+    const header = parseCandidateHeader(MASTER_SAMPLE, facts);
+    expect(header.name).toBe("Doruk Kirali");
+    expect(header.email).toBe("kiralidoruk@gmail.com");
+    expect(header.phone).toBe("0532 286 04 61");
+    expect(header.headline).toBe("Product Operations Manager");
+  });
+});
+
 describe("stripMarkdown", () => {
   it("removes markdown headers", () => {
     expect(stripMarkdown("## Header\nContent")).toBe("Header\nContent");
@@ -114,5 +450,64 @@ describe("stripMarkdown", () => {
 
   it("removes blockquote markers", () => {
     expect(stripMarkdown("> quoted text")).toBe("quoted text");
+  });
+});
+
+describe("parseFitCategories", () => {
+  const fullRaw = `FIT_SCORE: 72
+STRENGTHS: Python, React
+GAPS: Docker
+VERDICT: Good fit
+JD_SUMMARY: Role summary here.
+JD_KEYWORDS: Python, React
+SKILLS_MATCH: 80/100
+SKILLS_RATIONALE: Strong overlap on Python and React.
+EXPERIENCE_MATCH: 65/100
+EXPERIENCE_RATIONALE: 3y vs 5y required.
+SENIORITY_MATCH: 90/100
+SENIORITY_RATIONALE: Mid-senior match.
+TOOLS_MATCH: 70/100
+TOOLS_RATIONALE: Knows Git and Jira.`;
+
+  it("parses all four categories in order with score and rationale", () => {
+    const cats = parseFitCategories(fullRaw);
+    expect(cats).toHaveLength(4);
+    expect(cats.map((c) => c.key)).toEqual([
+      "SKILLS",
+      "EXPERIENCE",
+      "SENIORITY",
+      "TOOLS",
+    ]);
+    expect(cats[0]).toEqual({
+      key: "SKILLS",
+      label: "Skills",
+      score: 80,
+      rationale: "Strong overlap on Python and React.",
+    });
+    expect(cats[2].score).toBe(90);
+  });
+
+  it("returns empty array on legacy fit_summary with no *_MATCH lines", () => {
+    const legacy = `FIT_SCORE: 50
+STRENGTHS: a, b
+GAPS: None
+VERDICT: Maybe.`;
+    expect(parseFitCategories(legacy)).toEqual([]);
+  });
+
+  it("returns only parseable categories when some are missing", () => {
+    const partial = `SKILLS_MATCH: 80/100
+SKILLS_RATIONALE: yes.
+TOOLS_MATCH: 40/100`;
+    const cats = parseFitCategories(partial);
+    expect(cats.map((c) => c.key)).toEqual(["SKILLS", "TOOLS"]);
+    expect(cats[1].rationale).toBe("");
+  });
+
+  it("clamps scores outside 0-100", () => {
+    const weird = `SKILLS_MATCH: 150/100\nSKILLS_RATIONALE: oops.`;
+    expect(parseFitCategories(weird)[0].score).toBe(100);
+    const negative = `TOOLS_MATCH: -5/100\nTOOLS_RATIONALE: oops.`;
+    expect(parseFitCategories(negative)[0].score).toBe(0);
   });
 });

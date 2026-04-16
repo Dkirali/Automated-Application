@@ -1,6 +1,13 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import {
+  resolveCampaignAction,
+  resolveCampaignButtonLabel,
+  resolveCampaignButtonClass,
+} from "@/lib/campaign-ui";
+
+type FilterMode = "all" | "easy" | "manual" | "tailored" | "untailored";
 
 interface DashboardProps {
   stats: { applied: number; manual: number; status: string };
@@ -9,7 +16,6 @@ interface DashboardProps {
   activeModel: string;
   pendingJobs: Record<string, any>[];
   applications: Record<string, any>[];
-  manualQueue: Record<string, any>[];
   campaigns: Record<string, any>[];
   alert: string | null;
   availableModels: Record<string, string>;
@@ -31,7 +37,6 @@ export default function DashboardClient({
   activeModel,
   pendingJobs,
   applications,
-  manualQueue,
   campaigns,
   alert: initialAlert,
   availableModels,
@@ -43,7 +48,7 @@ export default function DashboardClient({
   const [liConnecting, setLiConnecting] = useState(false);
   const [selectedJobs, setSelectedJobs] = useState<Set<number>>(new Set());
   const [sortMode, setSortMode] = useState("fit-desc");
-  const [filterMode, setFilterMode] = useState("all");
+  const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [pendingPage, setPendingPage] = useState(1);
   const [pendingPageSize, setPendingPageSize] = useState(20);
   const [appsPage, setAppsPage] = useState(1);
@@ -133,10 +138,15 @@ export default function DashboardClient({
   // Filter pending jobs
   const filteredPending = sortedPending.filter((j) => {
     if (filterMode === "all") return true;
+    if (filterMode === "easy") return !!j.easy_apply;
+    if (filterMode === "manual") return !j.easy_apply;
     if (filterMode === "tailored") return !!j.resume_path;
     if (filterMode === "untailored") return !j.resume_path;
     return true;
   });
+
+  const pendingEasyCount = pendingJobs.filter((j) => j.easy_apply).length;
+  const pendingManualCount = pendingJobs.length - pendingEasyCount;
 
   // Paginate
   const pendingTotalPages = Math.max(1, Math.ceil(filteredPending.length / pendingPageSize));
@@ -216,7 +226,7 @@ export default function DashboardClient({
           <div className="stat-icon manual">⚠</div>
           <div className="stat-body">
             <StatNumber target={stats.manual} />
-            <div className="stat-label">Manual Queue</div>
+            <div className="stat-label">Manual Apply</div>
           </div>
         </div>
         <div className="stat-card">
@@ -231,15 +241,15 @@ export default function DashboardClient({
       {/* Campaign Controls */}
       <div className="campaign-card">
         <div className="campaign-card-title">New Campaign</div>
-        <form method="POST" action="/api/campaign/start">
+        <form method="POST" action={resolveCampaignAction(isRunning)}>
           <div className="form-row">
             <div className="form-group">
               <label className="form-label" htmlFor="titles">Job Titles <span>(comma separated)</span></label>
-              <input className="form-input" type="text" id="titles" name="titles" placeholder="Product Manager, Ops Manager" required />
+              <input className="form-input" type="text" id="titles" name="titles" placeholder="Product Manager, Ops Manager" required={!isRunning} disabled={isRunning} />
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="location_text">Location</label>
-              <input className="form-input" type="text" id="location_text" name="location_text" placeholder="Istanbul, London" />
+              <input className="form-input" type="text" id="location_text" name="location_text" placeholder="Istanbul, London" disabled={isRunning} />
             </div>
           </div>
 
@@ -247,11 +257,11 @@ export default function DashboardClient({
             <div className="filter-group">
               <div className="filter-label">Work Type</div>
               <div className="chip-group">
-                <input type="checkbox" id="wt1" name="work_type" value="1" />
+                <input type="checkbox" id="wt1" name="work_type" value="1" disabled={isRunning} />
                 <label htmlFor="wt1">On-site</label>
-                <input type="checkbox" id="wt2" name="work_type" value="2" defaultChecked />
+                <input type="checkbox" id="wt2" name="work_type" value="2" defaultChecked disabled={isRunning} />
                 <label htmlFor="wt2">Remote</label>
-                <input type="checkbox" id="wt3" name="work_type" value="3" defaultChecked />
+                <input type="checkbox" id="wt3" name="work_type" value="3" defaultChecked disabled={isRunning} />
                 <label htmlFor="wt3">Hybrid</label>
               </div>
             </div>
@@ -260,7 +270,7 @@ export default function DashboardClient({
               <div className="chip-group">
                 {[{ id: "el1", val: "1", label: "Internship" }, { id: "el2", val: "2", label: "Entry" }, { id: "el3", val: "3", label: "Associate" }, { id: "el4", val: "4", label: "Mid-Senior", checked: true }, { id: "el5", val: "5", label: "Director" }, { id: "el6", val: "6", label: "Executive" }].map((el) => (
                   <span key={el.id}>
-                    <input type="checkbox" id={el.id} name="exp_level" value={el.val} defaultChecked={el.checked} />
+                    <input type="checkbox" id={el.id} name="exp_level" value={el.val} defaultChecked={el.checked} disabled={isRunning} />
                     <label htmlFor={el.id}>{el.label}</label>
                   </span>
                 ))}
@@ -268,7 +278,7 @@ export default function DashboardClient({
             </div>
             <div className="filter-group">
               <div className="filter-label">Date Posted</div>
-              <select className="form-select" name="date_posted" defaultValue="r604800">
+              <select className="form-select" name="date_posted" defaultValue="r604800" disabled={isRunning}>
                 <option value="">Any time</option>
                 <option value="r86400">Past 24 hours</option>
                 <option value="r604800">Past week</option>
@@ -288,7 +298,7 @@ export default function DashboardClient({
                 const pct = Math.min((usageCount / limit) * 100, 100);
                 return (
                   <label key={key} className={`model-option ${!isConfigured ? "not-configured" : ""}`}>
-                    <input type="radio" name="preferred_model" value={key} defaultChecked={key === "auto"} disabled={!isConfigured} />
+                    <input type="radio" name="preferred_model" value={key} defaultChecked={key === "auto"} disabled={!isConfigured || isRunning} />
                     <span className="model-option-name">{label}</span>
                     {key !== "auto" && isConfigured && usageCount > 0 && (
                       <div className="model-option-usage">
@@ -305,15 +315,14 @@ export default function DashboardClient({
           </div>
 
           <div className="campaign-actions">
-            <button type="submit" className="btn-start">▶ Start</button>
-            <span className="campaign-hint">Max 20 applications per session</span>
+            <button type="submit" className={resolveCampaignButtonClass(isRunning)}>
+              {resolveCampaignButtonLabel(isRunning)}
+            </button>
+            <span className="campaign-hint">
+              {isRunning ? "Campaign is running — stop to reconfigure" : "Max 20 applications per session"}
+            </span>
           </div>
         </form>
-        <div className="campaign-bottom-row">
-          <form method="POST" action="/api/campaign/stop" className="stop-form">
-            <button type="submit" className="btn-stop">■ Stop Campaign</button>
-          </form>
-        </div>
       </div>
 
       {/* Pending Review */}
@@ -334,10 +343,31 @@ export default function DashboardClient({
               ))}
             </div>
             <div className="ctrl-group">
-              <span className="control-label">Filter</span>
-              {(["all", "tailored", "untailored"] as const).map((mode) => (
-                <button key={mode} className={`filter-btn ${filterMode === mode ? "active" : ""}`} onClick={() => { setFilterMode(mode); setPendingPage(1); }}>
-                  {mode === "all" ? "All" : mode === "tailored" ? "Tailored" : "Not Tailored"}
+              <span className="control-label">Apply</span>
+              {(["all", "easy", "manual"] as const).map((mode) => {
+                const count = mode === "all" ? pendingJobs.length : mode === "easy" ? pendingEasyCount : pendingManualCount;
+                const label = mode === "all" ? "All" : mode === "easy" ? "⚡ Easy" : "↗ Manual";
+                return (
+                  <button
+                    key={mode}
+                    className={`filter-btn filter-btn--${mode} ${filterMode === mode ? "active" : ""}`}
+                    onClick={() => { setFilterMode(mode); setPendingPage(1); }}
+                  >
+                    {label}
+                    <span className="filter-btn-count">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="ctrl-group">
+              <span className="control-label">Tailor</span>
+              {(["tailored", "untailored"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  className={`filter-btn ${filterMode === mode ? "active" : ""}`}
+                  onClick={() => { setFilterMode(mode); setPendingPage(1); }}
+                >
+                  {mode === "tailored" ? "Tailored" : "Not Tailored"}
                 </button>
               ))}
             </div>
@@ -363,7 +393,12 @@ export default function DashboardClient({
                     <a className="app-card-inner" href={`/review/${job.id}`}>
                       <div className="app-card-body">
                         <div className="app-card-title">{job.title}</div>
-                        <div className="app-card-meta">{job.company}{job.location ? ` · ${job.location}` : ""}</div>
+                        <div className="app-card-meta">
+                          <span className="app-card-meta-text">{job.company}{job.location ? ` · ${job.location}` : ""}</span>
+                          <span className={`apply-badge apply-badge--${job.easy_apply ? "easy" : "manual"}`}>
+                            {job.easy_apply ? "⚡ Easy Apply" : "↗ Manual Apply"}
+                          </span>
+                        </div>
                         {fs ? (
                           <div className="app-card-fit">
                             <span className={`fit-badge fit-badge--${fsClass}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFitModalJob(job); }}>
@@ -448,7 +483,12 @@ export default function DashboardClient({
             <a key={app.id} className="app-card" href={`/application/${app.id}`}>
               <div className="app-card-body">
                 <div className="app-card-title">{app.title}</div>
-                <div className="app-card-meta">{app.company}{app.location ? ` · ${app.location}` : ""}</div>
+                <div className="app-card-meta">
+                  <span className="app-card-meta-text">{app.company}{app.location ? ` · ${app.location}` : ""}</span>
+                  <span className={`apply-badge apply-badge--${app.easy_apply ? "easy" : "manual"}`}>
+                    {app.easy_apply ? "⚡ Easy Apply" : "↗ Manual Apply"}
+                  </span>
+                </div>
               </div>
               <div className="app-card-right">
                 {app.ats_score > 0 && (
@@ -517,24 +557,6 @@ export default function DashboardClient({
             ))}
           </div>
         </details>
-      )}
-
-      {/* Manual Queue */}
-      {manualQueue.length > 0 && (
-        <>
-          <div className="section-title manual-queue-title">Manual Queue</div>
-          <div className="card-list">
-            {manualQueue.map((job) => (
-              <div key={job.id} className="app-card app-card--static">
-                <div className="app-card-body">
-                  <div className="app-card-title">{job.title}</div>
-                  <div className="app-card-meta">{job.company}{job.location ? ` · ${job.location}` : ""}</div>
-                </div>
-                <a href={job.url} target="_blank" rel="noopener noreferrer" className="badge badge-manual">⚠ Apply Manually</a>
-              </div>
-            ))}
-          </div>
-        </>
       )}
 
       {/* Fit Breakdown Modal */}

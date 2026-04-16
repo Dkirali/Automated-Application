@@ -2,6 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 
+interface FitCategoryView {
+  key: string;
+  label: string;
+  score: number;
+  rationale: string;
+}
+
 interface ReviewClientProps {
   job: Record<string, any>;
   fit: {
@@ -11,6 +18,7 @@ interface ReviewClientProps {
     verdict: string;
     jd_summary: string | null;
     jd_keywords: string | null;
+    categories: FitCategoryView[];
   };
   availableModels: Record<string, string>;
   tailoringInProgress: boolean;
@@ -175,9 +183,30 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
             {fit.fit_score > 0 && (
               <span className={`fit-score-badge fit-score--${scoreClass(fit.fit_score)}`}>{fit.fit_score}% fit</span>
             )}
+            <span className={`apply-badge apply-badge--${currentJob.easy_apply ? "easy" : "manual"}`}>
+              {currentJob.easy_apply ? "⚡ Easy Apply" : "↗ Manual Apply"}
+            </span>
           </div>
           <p className="review-meta">{currentJob.company}{currentJob.location ? ` · ${currentJob.location}` : ""}</p>
-          <a href={currentJob.url} target="_blank" rel="noopener noreferrer" className="review-link">View on LinkedIn ↗</a>
+          {currentJob.easy_apply ? (
+            <a
+              href={currentJob.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="review-link"
+            >
+              View on LinkedIn ↗
+            </a>
+          ) : (
+            <a
+              href={currentJob.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="apply-linkedin-btn"
+            >
+              ↗ Apply on LinkedIn
+            </a>
+          )}
         </div>
 
         {/* Dual ATS Rings */}
@@ -237,6 +266,42 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
           <div className="skeleton-line" style={{ width: "60%" }} />
           <div className="skeleton-line" style={{ width: "40%" }} />
         </div>
+      )}
+
+      {fit.categories && fit.categories.length > 0 && (
+        <section className={`fit-score-card fit-score-card--${scoreClass(fit.fit_score)}`}>
+          <header className="fit-score-card-head">
+            <div className="fit-score-card-hero">
+              <span className="fit-score-card-eyebrow">Overall Fit Score</span>
+              <div className="fit-score-card-num">
+                <span className="fit-score-card-val">{fit.fit_score || "—"}</span>
+                <span className="fit-score-card-unit">/ 100</span>
+              </div>
+            </div>
+            <div className="fit-score-card-meter">
+              <div
+                className={`fit-score-card-meter-fill ${scoreClass(fit.fit_score)}`}
+                style={{ width: `${Math.max(fit.fit_score, 3)}%` }}
+              />
+            </div>
+          </header>
+          <div className="fit-categories">
+            <div className="fit-categories-title">Match Breakdown</div>
+            {fit.categories.map((cat) => (
+              <div key={cat.key} className="fit-cat-row">
+                <span className="fit-cat-label">{cat.label}</span>
+                <div className="fit-cat-bar-wrap">
+                  <div
+                    className={`fit-cat-bar-fill ${scoreClass(cat.score)}`}
+                    style={{ width: `${cat.score}%` }}
+                  />
+                </div>
+                <span className="fit-cat-score">{cat.score}</span>
+                {cat.rationale && <div className="fit-cat-rationale">{cat.rationale}</div>}
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Two-panel review grid */}

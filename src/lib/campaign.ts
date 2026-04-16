@@ -3,7 +3,6 @@ import {
   getConfig,
   getSeenUrls,
   insertApplication,
-  insertManual,
   updateApplication,
   updateCampaignStatus,
   getActiveCampaign,
@@ -61,18 +60,6 @@ export async function runCampaign(
     const masterPath = getConfig("master_resume_path");
 
     const onJob = (job: ScrapedJob) => {
-      if (!job.easy_apply) {
-        insertManual(
-          campaignId,
-          job.company || "Unknown",
-          job.title || "Unknown",
-          job.location || "",
-          job.url,
-          "not_easy_apply"
-        );
-        return;
-      }
-
       const appId = insertApplication({
         campaignId,
         company: job.company || "Unknown",
@@ -80,11 +67,13 @@ export async function runCampaign(
         location: job.location || "",
         url: job.url,
         jobDescription: job.job_description || "",
+        easyApply: job.easy_apply,
       });
       if (!appId) return; // duplicate
 
       jobsFound++;
-      update(`[${jobsFound} found] ${job.title} at ${job.company} — awaiting manual tailor`);
+      const applyTag = job.easy_apply ? "easy" : "manual";
+      update(`[${jobsFound} found] ${job.title} at ${job.company} (${applyTag}) — awaiting tailor`);
 
       // Run fit analysis in background
       if (masterPath && job.job_description) {

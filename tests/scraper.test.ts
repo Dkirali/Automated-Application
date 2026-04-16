@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSearchUrl, type SearchFilters } from "@/lib/scraper";
+import { buildSearchUrl, isEasyApplyText, type SearchFilters } from "@/lib/scraper";
 
 describe("buildSearchUrl", () => {
   it("builds basic search URL", () => {
@@ -32,5 +32,37 @@ describe("buildSearchUrl", () => {
   it("includes pagination start", () => {
     const url = buildSearchUrl(["Dev"], {}, 25);
     expect(url).toContain("start=25");
+  });
+});
+
+describe("isEasyApplyText", () => {
+  it("matches exact Easy Apply", () => {
+    expect(isEasyApplyText("Easy Apply")).toBe(true);
+  });
+
+  it("is case-insensitive and whitespace-tolerant", () => {
+    expect(isEasyApplyText("  easy apply  ")).toBe(true);
+    expect(isEasyApplyText("EASY APPLY")).toBe(true);
+    expect(isEasyApplyText("\n\tEasy Apply\n")).toBe(true);
+  });
+
+  it("matches when an icon glyph precedes the label", () => {
+    expect(isEasyApplyText("⚡ Easy Apply")).toBe(true);
+    expect(isEasyApplyText("Easy Apply ↗")).toBe(true);
+  });
+
+  it("rejects plain Apply (external apply button)", () => {
+    expect(isEasyApplyText("Apply")).toBe(false);
+    expect(isEasyApplyText("  APPLY  ")).toBe(false);
+  });
+
+  it("rejects unrelated button text", () => {
+    expect(isEasyApplyText("Apply on company site")).toBe(false);
+    expect(isEasyApplyText("Save")).toBe(false);
+    expect(isEasyApplyText("")).toBe(false);
+  });
+
+  it("rejects substring false-positives like 'Easy Applying'", () => {
+    expect(isEasyApplyText("Easy Applying")).toBe(false);
   });
 });

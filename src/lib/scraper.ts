@@ -19,17 +19,30 @@ export async function getBrowserContext(): Promise<BrowserContext> {
   });
 }
 
+export function isEasyApplyText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return /(^|[^a-z])easy\s+apply($|[^a-z])/i.test(text.trim());
+}
+
 async function isEasyApply(page: Page): Promise<boolean> {
-  const selectors = [
-    "button.jobs-apply-button:has-text('Easy Apply')",
-    "button:has-text('Easy Apply')",
-    "[data-job-id] button:has-text('Easy Apply')",
+  // Scope strictly to the right-hand job details panel. A page-wide
+  // locator matches "Easy Apply" labels on OTHER jobs in the left list
+  // and on the filter bar, producing false positives.
+  const panelSelectors = [
+    ".jobs-details__main-content",
+    ".jobs-search__job-details--container",
+    ".job-view-layout",
   ];
-  for (const sel of selectors) {
+  for (const panel of panelSelectors) {
     try {
-      if ((await page.locator(sel).count()) > 0) return true;
+      const button = page
+        .locator(`${panel} button.jobs-apply-button`)
+        .first();
+      if ((await button.count()) === 0) continue;
+      const text = (await button.textContent()) || "";
+      return isEasyApplyText(text);
     } catch {
-      // ignore
+      // try next panel
     }
   }
   return false;
