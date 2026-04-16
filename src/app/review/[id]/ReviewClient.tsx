@@ -2,6 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 
+interface FitCategoryView {
+  key: string;
+  label: string;
+  score: number;
+  rationale: string;
+}
+
 interface ReviewClientProps {
   job: Record<string, any>;
   fit: {
@@ -11,6 +18,7 @@ interface ReviewClientProps {
     verdict: string;
     jd_summary: string | null;
     jd_keywords: string | null;
+    categories: FitCategoryView[];
   };
   availableModels: Record<string, string>;
   tailoringInProgress: boolean;
@@ -257,6 +265,25 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
         <div className="fit-bar fit-bar--loading">
           <div className="skeleton-line" style={{ width: "60%" }} />
           <div className="skeleton-line" style={{ width: "40%" }} />
+        </div>
+      )}
+
+      {fit.categories && fit.categories.length > 0 && (
+        <div className="fit-categories">
+          <div className="fit-categories-title">Match Breakdown</div>
+          {fit.categories.map((cat) => (
+            <div key={cat.key} className="fit-cat-row">
+              <span className="fit-cat-label">{cat.label}</span>
+              <div className="fit-cat-bar-wrap">
+                <div
+                  className={`fit-cat-bar-fill ${scoreClass(cat.score)}`}
+                  style={{ width: `${cat.score}%` }}
+                />
+              </div>
+              <span className="fit-cat-score">{cat.score}</span>
+              {cat.rationale && <div className="fit-cat-rationale">{cat.rationale}</div>}
+            </div>
+          ))}
         </div>
       )}
 
