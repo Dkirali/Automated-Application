@@ -7,6 +7,8 @@ import {
   resolveCampaignButtonClass,
 } from "@/lib/campaign-ui";
 
+type FilterMode = "all" | "easy" | "manual" | "tailored" | "untailored";
+
 interface DashboardProps {
   stats: { applied: number; manual: number; status: string };
   linkedinConnected: boolean;
@@ -14,7 +16,6 @@ interface DashboardProps {
   activeModel: string;
   pendingJobs: Record<string, any>[];
   applications: Record<string, any>[];
-  manualQueue: Record<string, any>[];
   campaigns: Record<string, any>[];
   alert: string | null;
   availableModels: Record<string, string>;
@@ -36,7 +37,6 @@ export default function DashboardClient({
   activeModel,
   pendingJobs,
   applications,
-  manualQueue,
   campaigns,
   alert: initialAlert,
   availableModels,
@@ -48,7 +48,7 @@ export default function DashboardClient({
   const [liConnecting, setLiConnecting] = useState(false);
   const [selectedJobs, setSelectedJobs] = useState<Set<number>>(new Set());
   const [sortMode, setSortMode] = useState("fit-desc");
-  const [filterMode, setFilterMode] = useState("all");
+  const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [pendingPage, setPendingPage] = useState(1);
   const [pendingPageSize, setPendingPageSize] = useState(20);
   const [appsPage, setAppsPage] = useState(1);
@@ -138,10 +138,15 @@ export default function DashboardClient({
   // Filter pending jobs
   const filteredPending = sortedPending.filter((j) => {
     if (filterMode === "all") return true;
+    if (filterMode === "easy") return !!j.easy_apply;
+    if (filterMode === "manual") return !j.easy_apply;
     if (filterMode === "tailored") return !!j.resume_path;
     if (filterMode === "untailored") return !j.resume_path;
     return true;
   });
+
+  const pendingEasyCount = pendingJobs.filter((j) => j.easy_apply).length;
+  const pendingManualCount = pendingJobs.length - pendingEasyCount;
 
   // Paginate
   const pendingTotalPages = Math.max(1, Math.ceil(filteredPending.length / pendingPageSize));
@@ -221,7 +226,7 @@ export default function DashboardClient({
           <div className="stat-icon manual">⚠</div>
           <div className="stat-body">
             <StatNumber target={stats.manual} />
-            <div className="stat-label">Manual Queue</div>
+            <div className="stat-label">Manual Apply</div>
           </div>
         </div>
         <div className="stat-card">
@@ -338,10 +343,31 @@ export default function DashboardClient({
               ))}
             </div>
             <div className="ctrl-group">
-              <span className="control-label">Filter</span>
-              {(["all", "tailored", "untailored"] as const).map((mode) => (
-                <button key={mode} className={`filter-btn ${filterMode === mode ? "active" : ""}`} onClick={() => { setFilterMode(mode); setPendingPage(1); }}>
-                  {mode === "all" ? "All" : mode === "tailored" ? "Tailored" : "Not Tailored"}
+              <span className="control-label">Apply</span>
+              {(["all", "easy", "manual"] as const).map((mode) => {
+                const count = mode === "all" ? pendingJobs.length : mode === "easy" ? pendingEasyCount : pendingManualCount;
+                const label = mode === "all" ? "All" : mode === "easy" ? "⚡ Easy" : "↗ Manual";
+                return (
+                  <button
+                    key={mode}
+                    className={`filter-btn filter-btn--${mode} ${filterMode === mode ? "active" : ""}`}
+                    onClick={() => { setFilterMode(mode); setPendingPage(1); }}
+                  >
+                    {label}
+                    <span className="filter-btn-count">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="ctrl-group">
+              <span className="control-label">Tailor</span>
+              {(["tailored", "untailored"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  className={`filter-btn ${filterMode === mode ? "active" : ""}`}
+                  onClick={() => { setFilterMode(mode); setPendingPage(1); }}
+                >
+                  {mode === "tailored" ? "Tailored" : "Not Tailored"}
                 </button>
               ))}
             </div>
@@ -531,27 +557,6 @@ export default function DashboardClient({
             ))}
           </div>
         </details>
-      )}
-
-      {/* Manual Queue */}
-      {manualQueue.length > 0 && (
-        <>
-          <div className="section-title manual-queue-title">Manual Queue</div>
-          <div className="card-list">
-            {manualQueue.map((job) => (
-              <div key={job.id} className="app-card app-card--static">
-                <div className="app-card-body">
-                  <div className="app-card-title">{job.title}</div>
-                  <div className="app-card-meta">
-                    <span className="app-card-meta-text">{job.company}{job.location ? ` · ${job.location}` : ""}</span>
-                    <span className="apply-badge apply-badge--manual">↗ Manual Apply</span>
-                  </div>
-                </div>
-                <a href={job.url} target="_blank" rel="noopener noreferrer" className="badge badge-manual">⚠ Apply Manually</a>
-              </div>
-            ))}
-          </div>
-        </>
       )}
 
       {/* Fit Breakdown Modal */}
