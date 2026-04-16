@@ -88,7 +88,15 @@ STRENGTHS: <comma-separated list of 2-4 matching skills or experiences>
 GAPS: <comma-separated list of 1-3 missing skills, or "None">
 VERDICT: <one sentence — would you recommend applying? why?>
 JD_SUMMARY: <2-3 sentence summary of the role, seniority level, and key focus areas>
-JD_KEYWORDS: keyword1, keyword2, keyword3, ... <8-12 most important ATS/skills keywords from the job posting>`;
+JD_KEYWORDS: keyword1, keyword2, keyword3, ... <8-12 most important ATS/skills keywords from the job posting>
+SKILLS_MATCH: <0-100>/100
+SKILLS_RATIONALE: <one sentence explaining the skills score>
+EXPERIENCE_MATCH: <0-100>/100
+EXPERIENCE_RATIONALE: <one sentence explaining the experience score>
+SENIORITY_MATCH: <0-100>/100
+SENIORITY_RATIONALE: <one sentence explaining the seniority score>
+TOOLS_MATCH: <0-100>/100
+TOOLS_RATIONALE: <one sentence explaining the tools score>`;
 
 const TAILOR_PROMPT = `You are an expert resume writer specialising in ATS optimisation.
 
@@ -1110,6 +1118,7 @@ export async function generateFitSummary(
   verdict: string;
   jdSummary: string;
   jdKeywords: string;
+  categories: FitCategory[];
   raw: string;
 }> {
   const resumeText = await readResumeTextAsync(masterResumePath);
@@ -1119,7 +1128,7 @@ export async function generateFitSummary(
       "{resume_text}",
       resumeText.slice(0, 3000)
     ),
-    512
+    768
   );
 
   return {
@@ -1135,6 +1144,7 @@ export async function generateFitSummary(
     verdict: parseFitField(raw, "VERDICT"),
     jdSummary: parseFitField(raw, "JD_SUMMARY"),
     jdKeywords: parseFitField(raw, "JD_KEYWORDS"),
+    categories: parseFitCategories(raw),
     raw,
   };
 }
