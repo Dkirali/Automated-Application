@@ -269,22 +269,39 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
       )}
 
       {fit.categories && fit.categories.length > 0 && (
-        <div className="fit-categories">
-          <div className="fit-categories-title">Match Breakdown</div>
-          {fit.categories.map((cat) => (
-            <div key={cat.key} className="fit-cat-row">
-              <span className="fit-cat-label">{cat.label}</span>
-              <div className="fit-cat-bar-wrap">
-                <div
-                  className={`fit-cat-bar-fill ${scoreClass(cat.score)}`}
-                  style={{ width: `${cat.score}%` }}
-                />
+        <section className={`fit-score-card fit-score-card--${scoreClass(fit.fit_score)}`}>
+          <header className="fit-score-card-head">
+            <div className="fit-score-card-hero">
+              <span className="fit-score-card-eyebrow">Overall Fit Score</span>
+              <div className="fit-score-card-num">
+                <span className="fit-score-card-val">{fit.fit_score || "—"}</span>
+                <span className="fit-score-card-unit">/ 100</span>
               </div>
-              <span className="fit-cat-score">{cat.score}</span>
-              {cat.rationale && <div className="fit-cat-rationale">{cat.rationale}</div>}
             </div>
-          ))}
-        </div>
+            <div className="fit-score-card-meter">
+              <div
+                className={`fit-score-card-meter-fill ${scoreClass(fit.fit_score)}`}
+                style={{ width: `${Math.max(fit.fit_score, 3)}%` }}
+              />
+            </div>
+          </header>
+          <div className="fit-categories">
+            <div className="fit-categories-title">Match Breakdown</div>
+            {fit.categories.map((cat) => (
+              <div key={cat.key} className="fit-cat-row">
+                <span className="fit-cat-label">{cat.label}</span>
+                <div className="fit-cat-bar-wrap">
+                  <div
+                    className={`fit-cat-bar-fill ${scoreClass(cat.score)}`}
+                    style={{ width: `${cat.score}%` }}
+                  />
+                </div>
+                <span className="fit-cat-score">{cat.score}</span>
+                {cat.rationale && <div className="fit-cat-rationale">{cat.rationale}</div>}
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Two-panel review grid */}
