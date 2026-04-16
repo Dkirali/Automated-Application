@@ -175,9 +175,30 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
             {fit.fit_score > 0 && (
               <span className={`fit-score-badge fit-score--${scoreClass(fit.fit_score)}`}>{fit.fit_score}% fit</span>
             )}
+            <span className={`apply-badge apply-badge--${currentJob.easy_apply ? "easy" : "manual"}`}>
+              {currentJob.easy_apply ? "⚡ Easy Apply" : "↗ Manual Apply"}
+            </span>
           </div>
           <p className="review-meta">{currentJob.company}{currentJob.location ? ` · ${currentJob.location}` : ""}</p>
-          <a href={currentJob.url} target="_blank" rel="noopener noreferrer" className="review-link">View on LinkedIn ↗</a>
+          {currentJob.easy_apply ? (
+            <a
+              href={currentJob.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="review-link"
+            >
+              View on LinkedIn ↗
+            </a>
+          ) : (
+            <a
+              href={currentJob.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="apply-linkedin-btn"
+            >
+              ↗ Apply on LinkedIn
+            </a>
+          )}
         </div>
 
         {/* Dual ATS Rings */}
