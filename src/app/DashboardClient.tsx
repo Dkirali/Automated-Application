@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import {
+  resolveCampaignAction,
+  resolveCampaignButtonLabel,
+  resolveCampaignButtonClass,
+} from "@/lib/campaign-ui";
 
 interface DashboardProps {
   stats: { applied: number; manual: number; status: string };
@@ -231,15 +236,15 @@ export default function DashboardClient({
       {/* Campaign Controls */}
       <div className="campaign-card">
         <div className="campaign-card-title">New Campaign</div>
-        <form method="POST" action="/api/campaign/start">
+        <form method="POST" action={resolveCampaignAction(isRunning)}>
           <div className="form-row">
             <div className="form-group">
               <label className="form-label" htmlFor="titles">Job Titles <span>(comma separated)</span></label>
-              <input className="form-input" type="text" id="titles" name="titles" placeholder="Product Manager, Ops Manager" required />
+              <input className="form-input" type="text" id="titles" name="titles" placeholder="Product Manager, Ops Manager" required={!isRunning} disabled={isRunning} />
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="location_text">Location</label>
-              <input className="form-input" type="text" id="location_text" name="location_text" placeholder="Istanbul, London" />
+              <input className="form-input" type="text" id="location_text" name="location_text" placeholder="Istanbul, London" disabled={isRunning} />
             </div>
           </div>
 
@@ -247,11 +252,11 @@ export default function DashboardClient({
             <div className="filter-group">
               <div className="filter-label">Work Type</div>
               <div className="chip-group">
-                <input type="checkbox" id="wt1" name="work_type" value="1" />
+                <input type="checkbox" id="wt1" name="work_type" value="1" disabled={isRunning} />
                 <label htmlFor="wt1">On-site</label>
-                <input type="checkbox" id="wt2" name="work_type" value="2" defaultChecked />
+                <input type="checkbox" id="wt2" name="work_type" value="2" defaultChecked disabled={isRunning} />
                 <label htmlFor="wt2">Remote</label>
-                <input type="checkbox" id="wt3" name="work_type" value="3" defaultChecked />
+                <input type="checkbox" id="wt3" name="work_type" value="3" defaultChecked disabled={isRunning} />
                 <label htmlFor="wt3">Hybrid</label>
               </div>
             </div>
@@ -260,7 +265,7 @@ export default function DashboardClient({
               <div className="chip-group">
                 {[{ id: "el1", val: "1", label: "Internship" }, { id: "el2", val: "2", label: "Entry" }, { id: "el3", val: "3", label: "Associate" }, { id: "el4", val: "4", label: "Mid-Senior", checked: true }, { id: "el5", val: "5", label: "Director" }, { id: "el6", val: "6", label: "Executive" }].map((el) => (
                   <span key={el.id}>
-                    <input type="checkbox" id={el.id} name="exp_level" value={el.val} defaultChecked={el.checked} />
+                    <input type="checkbox" id={el.id} name="exp_level" value={el.val} defaultChecked={el.checked} disabled={isRunning} />
                     <label htmlFor={el.id}>{el.label}</label>
                   </span>
                 ))}
@@ -268,7 +273,7 @@ export default function DashboardClient({
             </div>
             <div className="filter-group">
               <div className="filter-label">Date Posted</div>
-              <select className="form-select" name="date_posted" defaultValue="r604800">
+              <select className="form-select" name="date_posted" defaultValue="r604800" disabled={isRunning}>
                 <option value="">Any time</option>
                 <option value="r86400">Past 24 hours</option>
                 <option value="r604800">Past week</option>
@@ -288,7 +293,7 @@ export default function DashboardClient({
                 const pct = Math.min((usageCount / limit) * 100, 100);
                 return (
                   <label key={key} className={`model-option ${!isConfigured ? "not-configured" : ""}`}>
-                    <input type="radio" name="preferred_model" value={key} defaultChecked={key === "auto"} disabled={!isConfigured} />
+                    <input type="radio" name="preferred_model" value={key} defaultChecked={key === "auto"} disabled={!isConfigured || isRunning} />
                     <span className="model-option-name">{label}</span>
                     {key !== "auto" && isConfigured && usageCount > 0 && (
                       <div className="model-option-usage">
@@ -305,15 +310,14 @@ export default function DashboardClient({
           </div>
 
           <div className="campaign-actions">
-            <button type="submit" className="btn-start">▶ Start</button>
-            <span className="campaign-hint">Max 20 applications per session</span>
+            <button type="submit" className={resolveCampaignButtonClass(isRunning)}>
+              {resolveCampaignButtonLabel(isRunning)}
+            </button>
+            <span className="campaign-hint">
+              {isRunning ? "Campaign is running — stop to reconfigure" : "Max 20 applications per session"}
+            </span>
           </div>
         </form>
-        <div className="campaign-bottom-row">
-          <form method="POST" action="/api/campaign/stop" className="stop-form">
-            <button type="submit" className="btn-stop">■ Stop Campaign</button>
-          </form>
-        </div>
       </div>
 
       {/* Pending Review */}
