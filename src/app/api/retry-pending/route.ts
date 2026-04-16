@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
       if (!jd) continue;
 
       try {
-        const tailor = await tailorResume(job.id, jd, masterPath, undefined, "auto", job.title);
+        const tailor = await tailorResume(job.id, jd, masterPath, undefined, "auto");
         updateApplication(job.id, "reviewed", {
           atsScore: tailor.atsScore,
           originalAtsScore: tailor.originalAtsScore,

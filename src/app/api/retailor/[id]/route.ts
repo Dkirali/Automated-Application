@@ -42,8 +42,7 @@ export async function POST(
         jd,
         masterPath,
         storedKeywords.length ? storedKeywords : undefined,
-        preferredModel,
-        job.title
+        preferredModel
       );
       updateApplication(appId, "reviewed", {
         atsScore: tailor.atsScore,
