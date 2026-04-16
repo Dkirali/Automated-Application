@@ -5,6 +5,7 @@ import {
   calculateAtsScore,
   parseFitScore,
   parseFitField,
+  parseFitCategories,
   stripMarkdown,
   matchesKeyword,
   extractMasterFacts,
@@ -449,5 +450,64 @@ describe("stripMarkdown", () => {
 
   it("removes blockquote markers", () => {
     expect(stripMarkdown("> quoted text")).toBe("quoted text");
+  });
+});
+
+describe("parseFitCategories", () => {
+  const fullRaw = `FIT_SCORE: 72
+STRENGTHS: Python, React
+GAPS: Docker
+VERDICT: Good fit
+JD_SUMMARY: Role summary here.
+JD_KEYWORDS: Python, React
+SKILLS_MATCH: 80/100
+SKILLS_RATIONALE: Strong overlap on Python and React.
+EXPERIENCE_MATCH: 65/100
+EXPERIENCE_RATIONALE: 3y vs 5y required.
+SENIORITY_MATCH: 90/100
+SENIORITY_RATIONALE: Mid-senior match.
+TOOLS_MATCH: 70/100
+TOOLS_RATIONALE: Knows Git and Jira.`;
+
+  it("parses all four categories in order with score and rationale", () => {
+    const cats = parseFitCategories(fullRaw);
+    expect(cats).toHaveLength(4);
+    expect(cats.map((c) => c.key)).toEqual([
+      "SKILLS",
+      "EXPERIENCE",
+      "SENIORITY",
+      "TOOLS",
+    ]);
+    expect(cats[0]).toEqual({
+      key: "SKILLS",
+      label: "Skills",
+      score: 80,
+      rationale: "Strong overlap on Python and React.",
+    });
+    expect(cats[2].score).toBe(90);
+  });
+
+  it("returns empty array on legacy fit_summary with no *_MATCH lines", () => {
+    const legacy = `FIT_SCORE: 50
+STRENGTHS: a, b
+GAPS: None
+VERDICT: Maybe.`;
+    expect(parseFitCategories(legacy)).toEqual([]);
+  });
+
+  it("returns only parseable categories when some are missing", () => {
+    const partial = `SKILLS_MATCH: 80/100
+SKILLS_RATIONALE: yes.
+TOOLS_MATCH: 40/100`;
+    const cats = parseFitCategories(partial);
+    expect(cats.map((c) => c.key)).toEqual(["SKILLS", "TOOLS"]);
+    expect(cats[1].rationale).toBe("");
+  });
+
+  it("clamps scores outside 0-100", () => {
+    const weird = `SKILLS_MATCH: 150/100\nSKILLS_RATIONALE: oops.`;
+    expect(parseFitCategories(weird)[0].score).toBe(100);
+    const negative = `TOOLS_MATCH: -5/100\nTOOLS_RATIONALE: oops.`;
+    expect(parseFitCategories(negative)[0].score).toBe(0);
   });
 });

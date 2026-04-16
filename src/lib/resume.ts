@@ -223,6 +223,38 @@ export function parseFitField(text: string, field: string): string {
   return m ? m[1].trim() : "";
 }
 
+export interface FitCategory {
+  key: "SKILLS" | "EXPERIENCE" | "SENIORITY" | "TOOLS";
+  label: string;
+  score: number; // 0–100, clamped
+  rationale: string;
+}
+
+const FIT_CATEGORY_KEYS = ["SKILLS", "EXPERIENCE", "SENIORITY", "TOOLS"] as const;
+const FIT_CATEGORY_LABELS: Record<FitCategory["key"], string> = {
+  SKILLS: "Skills",
+  EXPERIENCE: "Experience",
+  SENIORITY: "Seniority",
+  TOOLS: "Tools",
+};
+
+export function parseFitCategories(raw: string): FitCategory[] {
+  const out: FitCategory[] = [];
+  for (const key of FIT_CATEGORY_KEYS) {
+    const scoreM = raw.match(new RegExp(`${key}_MATCH:\\s*(-?\\d+)\\s*/\\s*100`, "i"));
+    if (!scoreM) continue;
+    const rationaleM = raw.match(new RegExp(`${key}_RATIONALE:\\s*([^\\n]+)`, "i"));
+    const n = parseInt(scoreM[1], 10);
+    out.push({
+      key,
+      label: FIT_CATEGORY_LABELS[key],
+      score: Math.max(0, Math.min(100, isNaN(n) ? 0 : n)),
+      rationale: rationaleM ? rationaleM[1].trim() : "",
+    });
+  }
+  return out;
+}
+
 export function stripMarkdown(text: string): string {
   let result = text;
   // Remove headers
