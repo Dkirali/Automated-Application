@@ -1,6 +1,11 @@
 import { redirect } from "next/navigation";
 import { getApplication } from "@/lib/db";
-import { AVAILABLE_MODELS, parseFitScore, parseFitField } from "@/lib/resume";
+import {
+  AVAILABLE_MODELS,
+  parseFitScore,
+  parseFitField,
+  parseFitCategories,
+} from "@/lib/resume";
 import ReviewClient from "./ReviewClient";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +33,7 @@ export default async function ReviewPage({ params, searchParams }: PageProps) {
     verdict: parseFitField(raw, "VERDICT") || raw,
     jd_summary: job.jd_summary,
     jd_keywords: job.keywords,
+    categories: parseFitCategories(raw),
   };
 
   const tailoringInProgress = !!sp.tailoring;
