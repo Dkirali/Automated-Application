@@ -161,6 +161,33 @@ describe("applications", () => {
     expect(app!.status).toBe("applied");
     expect(app!.applied_at).toBeTruthy();
   });
+
+  it("persists easy_apply=1 by default", () => {
+    const id = insertApplication({
+      campaignId,
+      company: "A",
+      title: "Dev",
+      location: "NYC",
+      url: "https://a.com/easy-1",
+      jobDescription: "JD",
+    })!;
+    const app = getApplication(id);
+    expect(app!.easy_apply).toBe(1);
+  });
+
+  it("persists easy_apply=0 when passed false", () => {
+    const id = insertApplication({
+      campaignId,
+      company: "A",
+      title: "Dev",
+      location: "NYC",
+      url: "https://a.com/manual-1",
+      jobDescription: "JD",
+      easyApply: false,
+    })!;
+    const app = getApplication(id);
+    expect(app!.easy_apply).toBe(0);
+  });
 });
 
 describe("manual queue", () => {
