@@ -364,6 +364,9 @@ export default function DashboardClient({
                       <div className="app-card-body">
                         <div className="app-card-title">{job.title}</div>
                         <div className="app-card-meta">{job.company}{job.location ? ` · ${job.location}` : ""}</div>
+                        <span className={`apply-badge apply-badge--${job.easy_apply ? "easy" : "manual"}`}>
+                          {job.easy_apply ? "⚡ Easy Apply" : "↗ Manual Apply"}
+                        </span>
                         {fs ? (
                           <div className="app-card-fit">
                             <span className={`fit-badge fit-badge--${fsClass}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFitModalJob(job); }}>
@@ -449,6 +452,9 @@ export default function DashboardClient({
               <div className="app-card-body">
                 <div className="app-card-title">{app.title}</div>
                 <div className="app-card-meta">{app.company}{app.location ? ` · ${app.location}` : ""}</div>
+                <span className={`apply-badge apply-badge--${app.easy_apply ? "easy" : "manual"}`}>
+                  {app.easy_apply ? "⚡ Easy Apply" : "↗ Manual Apply"}
+                </span>
               </div>
               <div className="app-card-right">
                 {app.ats_score > 0 && (
@@ -529,6 +535,7 @@ export default function DashboardClient({
                 <div className="app-card-body">
                   <div className="app-card-title">{job.title}</div>
                   <div className="app-card-meta">{job.company}{job.location ? ` · ${job.location}` : ""}</div>
+                  <span className="apply-badge apply-badge--manual">↗ Manual Apply</span>
                 </div>
                 <a href={job.url} target="_blank" rel="noopener noreferrer" className="badge badge-manual">⚠ Apply Manually</a>
               </div>
