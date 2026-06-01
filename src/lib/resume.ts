@@ -171,6 +171,37 @@ Rules:
 - Set met=true ONLY when the resume provides clear evidence. When in doubt set met=false.
 - Output ONLY the JSON object. No \`\`\` fences, no surrounding text.`;
 
+// One call that does BOTH the ATS extraction (for deterministic scoring) and
+// the human-readable rationale — used on the fresh-scrape path so each job
+// costs one LLM call instead of two. Resumable retries still use the split
+// extractJobRequirements / generateFitRationale functions.
+const COMBINED_FIT_PROMPT = `You are an ATS analyst and senior recruiter. Read the job posting and the candidate's resume, then output a strict JSON object — no preamble, no markdown, no commentary.
+
+Job Posting:
+{job_description}
+
+Candidate Resume:
+{resume_text}
+
+Output schema (return EXACTLY this shape):
+{
+  "required_keywords": [string, ...],   // skills/tools the JD explicitly requires
+  "preferred_keywords": [string, ...],  // nice-to-haves ("preferred", "a plus")
+  "hard_requirements": [
+    { "text": string, "met": boolean, "evidence": string }
+  ],
+  "jd_summary": string,                 // 2-3 sentence summary of the role, seniority, focus
+  "strengths": [string, ...],           // 2-4 matching skills or experiences
+  "gaps": [string, ...],                // 1-3 missing or weak areas (empty array if none)
+  "verdict": string                     // one sentence: would you recommend applying? why?
+}
+
+Rules:
+- 5-12 keywords total per list. Pull from the JD verbatim where possible — they are matched against the resume by ATS-style substring.
+- Hard requirements are concrete, checkable constraints (years of experience, degrees, certifications, language fluency, work authorization, location). Soft preferences go in preferred_keywords instead.
+- Set met=true ONLY when the resume provides clear evidence. When in doubt set met=false.
+- Output ONLY the JSON object. No \`\`\` fences, no surrounding text.`;
+
 const RATIONALE_PROMPT = `You are a senior recruiter writing a short opinion on a candidate's fit for a role. The numeric scoring is already done elsewhere — your job is the human-readable take.
 
 Job Posting:
@@ -1396,6 +1427,73 @@ export async function analyzeFitScores(
     missedPreferredKeywords: coverage.preferredMisses,
     jdKeywords,
   };
+}
+
+// Pure: turn a parsed combined-fit JSON object + the resume text into both the
+// deterministic scores and the rationale. Extracted so the (fragile) parsing
+// of the merged response is unit-testable without an LLM call, and so it
+// degrades gracefully when fields are missing.
+export function buildFitResult(
+  parsed: Record<string, unknown>,
+  resumeText: string
+): { scores: FitScores; rationale: FitRationale } {
+  const requirements: JobRequirements = {
+    required_keywords: toStringArray(parsed.required_keywords),
+    preferred_keywords: toStringArray(parsed.preferred_keywords),
+    hard_requirements: toHardRequirements(parsed.hard_requirements),
+  };
+  const coverage = calculateKeywordCoverage(
+    requirements.required_keywords,
+    requirements.preferred_keywords,
+    resumeText
+  );
+  const hardreqScore = calculateHardReqScore(requirements.hard_requirements);
+  const parseabilityScore = calculateParseability(resumeText);
+  const fitScore = blendFitScore(coverage.score, hardreqScore, parseabilityScore);
+  const jdKeywords = [
+    ...requirements.required_keywords,
+    ...requirements.preferred_keywords,
+  ].join(", ");
+
+  const scores: FitScores = {
+    fitScore,
+    keywordScore: coverage.score,
+    hardreqScore,
+    parseabilityScore,
+    requirements,
+    matchedRequiredKeywords: coverage.requiredHits,
+    missedRequiredKeywords: coverage.requiredMisses,
+    matchedPreferredKeywords: coverage.preferredHits,
+    missedPreferredKeywords: coverage.preferredMisses,
+    jdKeywords,
+  };
+
+  const strengths = toStringArray(parsed.strengths);
+  const gaps = toStringArray(parsed.gaps);
+  const verdict = typeof parsed.verdict === "string" ? parsed.verdict : "";
+  const jdSummary = typeof parsed.jd_summary === "string" ? parsed.jd_summary : "";
+  const raw = `JD_SUMMARY: ${jdSummary}\nSTRENGTHS: ${strengths.join(", ")}\nGAPS: ${
+    gaps.length ? gaps.join(", ") : "None"
+  }\nVERDICT: ${verdict}`;
+  const rationale: FitRationale = { strengths, gaps, verdict, jdSummary, raw };
+
+  return { scores, rationale };
+}
+
+// Fresh-scrape fit analysis: ONE LLM call returns both the ATS extraction
+// (deterministic scoring) and the rationale text — half the per-job calls of
+// analyzeFitScores + generateFitRationale (which stay for resumable retries).
+export async function analyzeFit(
+  jobDescription: string,
+  masterResumePath: string
+): Promise<{ scores: FitScores; rationale: FitRationale }> {
+  const resumeText = await readResumeTextAsync(masterResumePath);
+  const prompt = COMBINED_FIT_PROMPT
+    .replace("{job_description}", jobDescription.slice(0, 4000))
+    .replace("{resume_text}", resumeText.slice(0, 3000));
+  const raw = await callLlm(prompt, 1400, undefined, getFastModel() ?? undefined);
+  const parsed = (extractJsonObject(raw) as Record<string, unknown> | null) ?? {};
+  return buildFitResult(parsed, resumeText);
 }
 
 // Stage B — slower: rationale text only. Resolves in another ~2-3 s.
