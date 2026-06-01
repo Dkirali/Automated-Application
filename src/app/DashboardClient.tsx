@@ -51,6 +51,12 @@ export default function DashboardClient({
   const [appsPageSize, setAppsPageSize] = useState(20);
   const [fitModalJob, setFitModalJob] = useState<Record<string, any> | null>(null);
   const lastPendingCount = useRef(pendingJobs.length);
+  const lastAnalyzedCount = useRef(
+    pendingJobs.filter(
+      (j) =>
+        j.fit_score !== null && j.fit_score !== undefined && !!j.fit_summary
+    ).length
+  );
 
   const [usage, setUsage] = useState<UsageState | null>(null);
   const [alertsEnabled, setAlertsEnabled] = useState(false);
@@ -105,6 +111,14 @@ export default function DashboardClient({
           if (running) setStatusText(data.status);
           if (data.pending_count !== undefined && data.pending_count !== lastPendingCount.current) {
             lastPendingCount.current = data.pending_count;
+            location.reload();
+          }
+          // Auto-refresh when fit analysis completes for already-listed jobs.
+          if (
+            data.analyzed_count !== undefined &&
+            data.analyzed_count !== lastAnalyzedCount.current
+          ) {
+            lastAnalyzedCount.current = data.analyzed_count;
             location.reload();
           }
         })
