@@ -116,6 +116,34 @@ export function getActiveModel(): ActiveModel | null {
   return provider ? PROVIDER_MODELS[provider] : null;
 }
 
+// Smaller, cheaper, higher-quota models for high-volume "cheap" work (fit
+// scoring + rationale). Routing these off the flagship model preserves
+// tailoring quality while giving the bulk of calls a separate, larger daily
+// token budget (TPD is per-model). OpenRouter has no distinct fast tier here,
+// so it reuses its default.
+export const PROVIDER_FAST_MODELS: Record<ActiveProvider, ActiveModel> = {
+  groq: {
+    provider: "groq",
+    modelId: "llama-3.1-8b-instant",
+    displayName: "Groq / Llama 3.1 8B",
+    envKey: "GROQ_API_KEY",
+    usageKey: "groq/llama-3.1-8b",
+  },
+  anthropic: {
+    provider: "anthropic",
+    modelId: "claude-haiku-4-5-20251001",
+    displayName: "Anthropic / Claude Haiku",
+    envKey: "ANTHROPIC_API_KEY",
+    usageKey: "anthropic/claude-haiku",
+  },
+  openrouter: PROVIDER_MODELS.openrouter,
+};
+
+export function getFastModel(): ActiveModel | null {
+  const provider = getActiveProvider();
+  return provider ? PROVIDER_FAST_MODELS[provider] : null;
+}
+
 const EXTRACTOR_PROMPT = `You are an ATS analyst. Read the job posting and the candidate's resume, then output a strict JSON object — no preamble, no markdown, no commentary.
 
 Job Posting:
@@ -860,7 +888,8 @@ async function callProvider(
 async function callLlm(
   prompt: string,
   maxTokens: number = 2048,
-  validate?: (text: string) => { ok: true } | { ok: false; errors: string[] }
+  validate?: (text: string) => { ok: true } | { ok: false; errors: string[] },
+  modelOverride?: ActiveModel
 ): Promise<string> {
   // Already-known rate limit — skip the call so we don't burn time and
   // pile up identical 429s. Surfaces as a RateLimitError so callers can
@@ -877,7 +906,7 @@ async function callLlm(
   }
   llmLastCall = Date.now();
 
-  const model = getActiveModel();
+  const model = modelOverride ?? getActiveModel();
   if (!model) {
     throw new Error(
       "No active provider configured. Complete onboarding to pick a provider."
@@ -1294,7 +1323,9 @@ export async function extractJobRequirements(
   const prompt = EXTRACTOR_PROMPT
     .replace("{job_description}", jobDescription.slice(0, 4000))
     .replace("{resume_text}", resumeText.slice(0, 3000));
-  const raw = await callLlm(prompt, 1200);
+  // Routed to the cheaper, higher-quota model — extraction is keyword-pulling,
+  // not the quality-critical résumé rewrite.
+  const raw = await callLlm(prompt, 1200, undefined, getFastModel() ?? undefined);
   const parsed = extractJsonObject(raw) as Record<string, unknown> | null;
   if (!parsed) {
     return { required_keywords: [], preferred_keywords: [], hard_requirements: [] };
@@ -1377,7 +1408,7 @@ export async function generateFitRationale(
   const rationalePrompt = RATIONALE_PROMPT
     .replace("{job_description}", jobDescription.slice(0, 4000))
     .replace("{resume_text}", resumeText.slice(0, 3000));
-  const raw = await callLlm(rationalePrompt, 512);
+  const raw = await callLlm(rationalePrompt, 512, undefined, getFastModel() ?? undefined);
   return {
     raw,
     strengths: parseFitField(raw, "STRENGTHS")
