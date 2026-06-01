@@ -76,33 +76,48 @@ export function isEasyApplyText(text: string | null | undefined): boolean {
   return /(^|[^a-z])easy\s+apply($|[^a-z])/i.test(text.trim());
 }
 
-async function isEasyApply(page: Page): Promise<boolean> {
-  // The detector runs against LinkedIn's CURRENT DOM, which:
-  //   • renders the apply control as an <a>, not a <button>
-  //   • uses hashed CSS-module class names (no semantic `jobs-apply-button`)
-  //   • localizes the visible text and aria-label ("Başvurun" in Turkish,
-  //     "Solicitar" in Spanish, etc.) — so English keyword matching fails
-  //   • renamed "Easy Apply" → "LinkedIn Apply" in 2026
-  //
-  // The reliable, locale-independent signal is the SAME element for BOTH
-  // Easy and External apply: `[data-view-name='job-apply-button']`. The
-  // type is then disambiguated by the icon inside and the href:
-  //   - linkedin-bug icon  + openSDUIApplyFlow=true href → Easy Apply
-  //   - link-external icon + /safety/go href             → External Apply
-  //
-  // We must wait for the primary control to hydrate before classifying —
-  // bare linkedin-bug SVGs elsewhere on the page (header, footer, badges)
-  // would otherwise produce a false positive via a too-loose fallback.
-  try {
-    await page.waitForLoadState("networkidle", { timeout: 8000 });
-  } catch {
-    /* some LinkedIn pages never idle — proceed anyway */
+// Signals read off LinkedIn's single apply button (it serves BOTH Easy and
+// External apply). As of 2026:
+//   - Easy Apply  → linkedin-bug icon  + aria "LinkedIn Apply to …"
+//   - External    → link-external icon + aria "Apply to … on company website" + role="link"
+// The icon is the locale-proof signal; the aria text is an English-only hint.
+export interface ApplyButtonSignals {
+  ariaLabel: string;
+  hasLinkedinBug: boolean;
+  hasExternalIcon: boolean;
+  role: string;
+}
+
+// Pure classifier (unit-tested) so the fragile DOM-signal mapping is verifiable
+// without a live browser.
+export function classifyEasyApply(sig: ApplyButtonSignals): boolean {
+  const aria = (sig.ariaLabel || "").toLowerCase();
+  // Unambiguous external markers win first.
+  if (sig.hasExternalIcon || aria.includes("on company website")) return false;
+  // Easy Apply markers (rebranded "Easy Apply" → "LinkedIn Apply").
+  if (sig.hasLinkedinBug || /linkedin apply|easy apply/i.test(sig.ariaLabel)) {
+    return true;
   }
+  // No positive Easy signal → treat as external (safer than attempting an
+  // in-app apply on a link that leaves LinkedIn).
+  return false;
+}
+
+async function isEasyApply(page: Page): Promise<boolean> {
+  // LinkedIn (2026) serves a single apply button — button#jobs-apply-button-id
+  // / button.jobs-apply-button — for BOTH Easy and External apply, told apart by
+  // the icon + aria-label (see classifyEasyApply). The old data-view-name anchor
+  // was removed; we keep it only as a last-ditch selector. We also skip
+  // waitForLoadState('networkidle') (LinkedIn streams beacons forever, so it just
+  // burns the budget) and give the late-hydrating button a longer window.
+  const APPLY_SELECTOR =
+    "button#jobs-apply-button-id, button.jobs-apply-button, [data-live-test-job-apply-button], [data-view-name='job-apply-button']";
+  await page.waitForTimeout(1500);
   try {
-    await page.waitForSelector(
-      "[data-view-name='job-apply-button'], button.jobs-apply-button, button[aria-label*='easy apply' i], button[aria-label*='linkedin apply' i]",
-      { timeout: 15000 }
-    );
+    await page.waitForSelector(APPLY_SELECTOR, {
+      timeout: 25000,
+      state: "attached",
+    });
   } catch {
     const snapPath = await saveEasyApplySnapshot(page, page.url());
     console.log(
@@ -112,114 +127,34 @@ async function isEasyApply(page: Page): Promise<boolean> {
     return false;
   }
 
-  const result = await page.evaluate(() => {
-    // Localized words for "apply" — captured for diagnostic logging only;
-    // we don't rely on these for the positive signal anymore.
-    const applyRe =
-      /apply|başvur|solicit|candidat|postul|bewerb|sollicit|応募|지원/i;
-
-    type Sig = { isEasy: boolean; reason: string; matched: string; href?: string };
-
-    // The primary apply control uses data-view-name="job-apply-button" for
-    // BOTH Easy Apply AND "Apply on company website" (external). Disambiguate
-    // by looking at the icon inside (linkedin-bug = native, link-external =
-    // external) and the href (openSDUIApplyFlow=true = native, /safety/go = external).
-    const primary = document.querySelector<HTMLElement>(
-      "[data-view-name='job-apply-button']"
-    );
-    if (primary) {
-      const href = (primary.getAttribute("href") || "").toLowerCase();
-      const hasLinkedinBug = !!primary.querySelector("svg[id^='linkedin-bug' i]");
-      const hasExternalIcon = !!primary.querySelector("svg[id^='link-external' i]");
-      const hasSdui = href.includes("opensduiapplyflow=true");
-      const hasSafetyGo = href.includes("/safety/go/");
-      const matched = (primary.getAttribute("aria-label") || primary.textContent || "").trim().slice(0, 80);
-
-      if (hasLinkedinBug || hasSdui) {
-        return {
-          isEasy: true,
-          reason: hasLinkedinBug ? "data-view-name + linkedin-bug icon" : "data-view-name + openSDUIApplyFlow",
-          matched,
-          href: primary.getAttribute("href") || "",
-        } as Sig;
-      }
-      if (hasExternalIcon || hasSafetyGo) {
-        return {
-          isEasy: false,
-          reason: hasExternalIcon ? "data-view-name with link-external icon" : "data-view-name with safety/go href",
-          matched,
-          href: primary.getAttribute("href") || "",
-        } as Sig;
-      }
-      // Ambiguous — neither marker. Lean external (safer to miss-classify
-      // an Easy Apply than to attempt Easy-Apply on an external link).
-      return {
-        isEasy: false,
-        reason: "data-view-name but no Easy/External signal",
-        matched,
-        href: primary.getAttribute("href") || "",
-      } as Sig;
-    }
-
-    // No data-view-name button found. Try the SDUI-flow URL as a stand-alone
-    // signal — that URL pattern is specific to LinkedIn's in-app apply flow
-    // and only appears in the apply-button href, never in nav/footer links.
-    const sdui = document.querySelector<HTMLAnchorElement>(
-      "a[href*='openSDUIApplyFlow=true']"
-    );
-    if (sdui) {
-      return {
-        isEasy: true,
-        reason: "href has openSDUIApplyFlow=true",
-        matched: sdui.textContent?.trim().slice(0, 80) || "",
-        href: sdui.href,
-      } as Sig;
-    }
-
-    // ── Legacy fallback (older LinkedIn UI) ───────────────────────
-    const legacy = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        "button.jobs-apply-button, button[aria-label*='apply' i]"
-      )
-    );
-    for (const b of legacy) {
-      const text = (b.textContent || "").trim();
-      const aria = (b.getAttribute("aria-label") || "").trim();
-      if (/easy\s+apply/i.test(text) || /easy\s+apply/i.test(aria) || b.classList.contains("jobs-apply-button")) {
-        return {
-          isEasy: true,
-          reason: "legacy jobs-apply-button / 'Easy Apply' text",
-          matched: aria || text,
-        } as Sig;
-      }
-    }
-
-    // ── No positive signal — collect a few diagnostic labels ──────
-    const allCandidates = Array.from(document.querySelectorAll<HTMLElement>("button, a"))
-      .filter((el) => {
-        const t = (el.textContent || "").trim();
-        const a = (el.getAttribute("aria-label") || "").trim();
-        return applyRe.test(t) || applyRe.test(a);
-      })
-      .slice(0, 5)
-      .map((el) => ({
-        tag: el.tagName.toLowerCase(),
-        aria: (el.getAttribute("aria-label") || "").trim(),
-        text: (el.textContent || "").trim().slice(0, 60),
-      }));
+  const sig = await page.evaluate((selector) => {
+    const btn = document.querySelector<HTMLElement>(selector);
+    if (!btn) return null;
     return {
-      isEasy: false,
-      reason: allCandidates.length ? "apply-shaped elements but no Easy-Apply signal" : "no apply controls in DOM",
-      matched: "",
-      seen: allCandidates,
-    } as Sig & { seen?: typeof allCandidates };
-  });
+      ariaLabel: (btn.getAttribute("aria-label") || btn.textContent || "")
+        .trim()
+        .slice(0, 120),
+      hasLinkedinBug: !!btn.querySelector(
+        "svg[id^='linkedin-bug' i], use[href*='linkedin-bug' i]"
+      ),
+      hasExternalIcon: !!btn.querySelector(
+        "svg[id^='link-external' i], use[href*='link-external' i]"
+      ),
+      role: (btn.getAttribute("role") || "").trim(),
+    };
+  }, APPLY_SELECTOR);
 
+  if (!sig) {
+    console.log("[easy-apply] apply button vanished after wait — not easy apply");
+    return false;
+  }
+  const isEasy = classifyEasyApply(sig);
   console.log(
-    `[easy-apply] isEasy=${result.isEasy} reason="${result.reason}"` +
-      (result.isEasy ? ` matched="${result.matched}"` : ` seen=${JSON.stringify((result as { seen?: unknown }).seen ?? [])}`)
+    `[easy-apply] isEasy=${isEasy} icon=${
+      sig.hasLinkedinBug ? "linkedin-bug" : sig.hasExternalIcon ? "link-external" : "none"
+    } aria="${sig.ariaLabel}"`
   );
-  return result.isEasy;
+  return isEasy;
 }
 
 interface JobCard {
