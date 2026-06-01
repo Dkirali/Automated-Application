@@ -39,6 +39,29 @@ export function getProfilePath(): string {
   return process.env.JOBBOT_PROFILE_DIR || JOBBOT_PROFILE;
 }
 
+// Thrown when LinkedIn serves the unauthenticated "Join now"/login wall — i.e.
+// the persistent profile's session is missing or expired. Callers should stop
+// and prompt the user to reconnect rather than scrape an empty guest page.
+export class LinkedinAuthError extends Error {
+  constructor() {
+    super("LinkedIn session expired — reconnect LinkedIn in Settings to continue.");
+    this.name = "LinkedinAuthError";
+  }
+}
+
+// An expired/missing session navigating to a jobs URL gets redirected by
+// LinkedIn to an authwall / login / signup / security-checkpoint URL.
+export function isAuthwallUrl(url: string): boolean {
+  const u = url.toLowerCase();
+  return (
+    u.includes("/authwall") ||
+    u.includes("/login") ||
+    u.includes("/uas/login") ||
+    u.includes("/signup") ||
+    u.includes("/checkpoint/")
+  );
+}
+
 export async function getBrowserContext(): Promise<BrowserContext> {
   mkdirSync(JOBBOT_PROFILE, { recursive: true });
   return chromium.launchPersistentContext(JOBBOT_PROFILE, {
@@ -347,6 +370,13 @@ export async function scrapeJobs(
       update(`Opening LinkedIn page ${pageNum}: ${searchUrl.slice(0, 80)}…`);
       await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
       await page.waitForTimeout(3000);
+
+      // If the session is dead, LinkedIn redirects to its authwall/login page
+      // instead of the job results. Bail out loudly so the campaign stops and
+      // the user is told to reconnect — rather than silently scraping nothing.
+      if (isAuthwallUrl(page.url())) {
+        throw new LinkedinAuthError();
+      }
 
       // Fix LinkedIn location duplication: clear auto-resolved location and
       // re-enter the original text, then dismiss the distance filter pill

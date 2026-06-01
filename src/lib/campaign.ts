@@ -49,7 +49,7 @@ export async function runCampaign(
   };
 
   // Import scraper lazily to avoid loading Playwright at module init
-  const { scrapeJobs } = await import("./scraper");
+  const { scrapeJobs, LinkedinAuthError } = await import("./scraper");
 
   let totalJobsAdded = 0;
 
@@ -112,9 +112,16 @@ export async function runCampaign(
     try {
       await scrapeJobs(titles, filters, seenUrls, stopCheck, update, onJob);
     } catch (e) {
-      const msg = `Scraper error: ${e}`;
-      alert = msg;
-      status = msg;
+      if (e instanceof LinkedinAuthError) {
+        const msg =
+          "⚠ LinkedIn session expired — reconnect LinkedIn in Settings, then restart the campaign.";
+        alert = msg;
+        status = msg;
+      } else {
+        const msg = `Scraper error: ${e}`;
+        alert = msg;
+        status = msg;
+      }
       break;
     }
 
