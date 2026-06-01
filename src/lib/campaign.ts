@@ -7,7 +7,7 @@ import {
   updateCampaignStatus,
   getActiveCampaign,
 } from "./db";
-import { analyzeFitScores, generateFitRationale } from "./resume";
+import { analyzeFit } from "./resume";
 import type { SearchFilters, ScrapedJob } from "./scraper";
 
 // Module-level state — mirrors the Python app's globals
@@ -49,7 +49,7 @@ export async function runCampaign(
   };
 
   // Import scraper lazily to avoid loading Playwright at module init
-  const { scrapeJobs } = await import("./scraper");
+  const { scrapeJobs, LinkedinAuthError } = await import("./scraper");
 
   let totalJobsAdded = 0;
 
@@ -75,34 +75,24 @@ export async function runCampaign(
       const applyTag = job.easy_apply ? "easy" : "manual";
       update(`[${jobsFound} found] ${job.title} at ${job.company} (${applyTag}) — awaiting tailor`);
 
-      // Two-stage fit analysis — scores land in the DB ASAP so the
-      // dashboard shows them before the slower rationale text arrives.
+      // Single-call fit analysis — scores + rationale in one LLM round trip
+      // (half the per-job calls). If it fails, the job stays unscored and
+      // retry-fit picks it up later with its resumable two-stage path.
       if (masterPath && job.job_description) {
-        const jd = job.job_description;
-        analyzeFitScores(jd, masterPath)
-          .then((scores) => {
+        analyzeFit(job.job_description, masterPath)
+          .then(({ scores, rationale }) => {
             updateApplication(appId, "pending", {
               fitScore: scores.fitScore,
               keywordScore: scores.keywordScore,
               hardreqScore: scores.hardreqScore,
               parseabilityScore: scores.parseabilityScore,
               requirementsJson: JSON.stringify(scores.requirements),
+              fitSummary: rationale.raw,
+              jdSummary: rationale.jdSummary,
             });
-            // Stage B in a separate microtask so a rationale failure
-            // can't undo the score write.
-            generateFitRationale(jd, masterPath)
-              .then((rationale) => {
-                updateApplication(appId, "pending", {
-                  fitSummary: rationale.raw,
-                  jdSummary: rationale.jdSummary,
-                });
-              })
-              .catch(() => {
-                // non-fatal — score is already saved
-              });
           })
           .catch(() => {
-            // non-fatal — job stays unscored, user can retry
+            // non-fatal — job stays unscored, retry-fit will pick it up
           });
       }
     };
@@ -112,9 +102,16 @@ export async function runCampaign(
     try {
       await scrapeJobs(titles, filters, seenUrls, stopCheck, update, onJob);
     } catch (e) {
-      const msg = `Scraper error: ${e}`;
-      alert = msg;
-      status = msg;
+      if (e instanceof LinkedinAuthError) {
+        const msg =
+          "⚠ LinkedIn session expired — reconnect LinkedIn in Settings, then restart the campaign.";
+        alert = msg;
+        status = msg;
+      } else {
+        const msg = `Scraper error: ${e}`;
+        alert = msg;
+        status = msg;
+      }
       break;
     }
 

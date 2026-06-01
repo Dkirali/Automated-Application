@@ -2706,3 +2706,10 @@ mark.kw-highlight {
   padding: 0.2rem 0.6rem;
   cursor: pointer;
 }
+
+/* LinkedIn connect — login-not-completed message */
+.li-error {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.82rem;
+  color: var(--clr-danger, #e5484d);
+}

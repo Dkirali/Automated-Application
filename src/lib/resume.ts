@@ -79,6 +79,8 @@ export interface ActiveModel {
   displayName: string;
   envKey: string;
   usageKey: string;
+  /** Free-tier tokens-per-minute budget — paces calls to avoid 429s. */
+  tpm: number;
 }
 
 export const PROVIDER_MODELS: Record<ActiveProvider, ActiveModel> = {
@@ -88,6 +90,7 @@ export const PROVIDER_MODELS: Record<ActiveProvider, ActiveModel> = {
     displayName: "Groq / Llama 3.3 70B",
     envKey: "GROQ_API_KEY",
     usageKey: "groq/llama-3.3-70b",
+    tpm: 12_000,
   },
   anthropic: {
     provider: "anthropic",
@@ -95,6 +98,7 @@ export const PROVIDER_MODELS: Record<ActiveProvider, ActiveModel> = {
     displayName: "Anthropic / Claude Sonnet",
     envKey: "ANTHROPIC_API_KEY",
     usageKey: "anthropic/claude-sonnet",
+    tpm: 20_000,
   },
   openrouter: {
     provider: "openrouter",
@@ -102,6 +106,7 @@ export const PROVIDER_MODELS: Record<ActiveProvider, ActiveModel> = {
     displayName: "OpenRouter / GPT-OSS 120B",
     envKey: "OPENROUTER_API_KEY",
     usageKey: "openrouter/gpt-oss-120b",
+    tpm: 20_000,
   },
 };
 
@@ -114,6 +119,36 @@ export function getActiveProvider(): ActiveProvider | null {
 export function getActiveModel(): ActiveModel | null {
   const provider = getActiveProvider();
   return provider ? PROVIDER_MODELS[provider] : null;
+}
+
+// Smaller, cheaper, higher-quota models for high-volume "cheap" work (fit
+// scoring + rationale). Routing these off the flagship model preserves
+// tailoring quality while giving the bulk of calls a separate, larger daily
+// token budget (TPD is per-model). OpenRouter has no distinct fast tier here,
+// so it reuses its default.
+export const PROVIDER_FAST_MODELS: Record<ActiveProvider, ActiveModel> = {
+  groq: {
+    provider: "groq",
+    modelId: "llama-3.1-8b-instant",
+    displayName: "Groq / Llama 3.1 8B",
+    envKey: "GROQ_API_KEY",
+    usageKey: "groq/llama-3.1-8b",
+    tpm: 6_000,
+  },
+  anthropic: {
+    provider: "anthropic",
+    modelId: "claude-haiku-4-5-20251001",
+    displayName: "Anthropic / Claude Haiku",
+    envKey: "ANTHROPIC_API_KEY",
+    usageKey: "anthropic/claude-haiku",
+    tpm: 30_000,
+  },
+  openrouter: PROVIDER_MODELS.openrouter,
+};
+
+export function getFastModel(): ActiveModel | null {
+  const provider = getActiveProvider();
+  return provider ? PROVIDER_FAST_MODELS[provider] : null;
 }
 
 const EXTRACTOR_PROMPT = `You are an ATS analyst. Read the job posting and the candidate's resume, then output a strict JSON object — no preamble, no markdown, no commentary.
@@ -140,6 +175,37 @@ Output schema (return EXACTLY this shape):
 Rules:
 - 5-12 keywords total per list. Pull from the JD verbatim where possible — they are matched against the resume by ATS-style substring.
 - Hard requirements are concrete, checkable constraints (years of experience, degrees, certifications, language fluency, legal work authorization, location). Soft preferences go in preferred_keywords instead.
+- Set met=true ONLY when the resume provides clear evidence. When in doubt set met=false.
+- Output ONLY the JSON object. No \`\`\` fences, no surrounding text.`;
+
+// One call that does BOTH the ATS extraction (for deterministic scoring) and
+// the human-readable rationale — used on the fresh-scrape path so each job
+// costs one LLM call instead of two. Resumable retries still use the split
+// extractJobRequirements / generateFitRationale functions.
+const COMBINED_FIT_PROMPT = `You are an ATS analyst and senior recruiter. Read the job posting and the candidate's resume, then output a strict JSON object — no preamble, no markdown, no commentary.
+
+Job Posting:
+{job_description}
+
+Candidate Resume:
+{resume_text}
+
+Output schema (return EXACTLY this shape):
+{
+  "required_keywords": [string, ...],   // skills/tools the JD explicitly requires
+  "preferred_keywords": [string, ...],  // nice-to-haves ("preferred", "a plus")
+  "hard_requirements": [
+    { "text": string, "met": boolean, "evidence": string }
+  ],
+  "jd_summary": string,                 // 2-3 sentence summary of the role, seniority, focus
+  "strengths": [string, ...],           // 2-4 matching skills or experiences
+  "gaps": [string, ...],                // 1-3 missing or weak areas (empty array if none)
+  "verdict": string                     // one sentence: would you recommend applying? why?
+}
+
+Rules:
+- 5-12 keywords total per list. Pull from the JD verbatim where possible — they are matched against the resume by ATS-style substring.
+- Hard requirements are concrete, checkable constraints (years of experience, degrees, certifications, language fluency, work authorization, location). Soft preferences go in preferred_keywords instead.
 - Set met=true ONLY when the resume provides clear evidence. When in doubt set met=false.
 - Output ONLY the JSON object. No \`\`\` fences, no surrounding text.`;
 
@@ -711,10 +777,94 @@ export class RateLimitError extends Error {
 }
 
 // Module-level rate-limit state. Stashed on globalThis so HMR doesn't fork it.
-interface LlmGlobals { __jobbot_rate_limit_until: number; __jobbot_rate_limit_msg: string }
+interface LlmGlobals {
+  __jobbot_rate_limit_until: number;
+  __jobbot_rate_limit_msg: string;
+  __jobbot_token_windows?: Record<string, TokenWindowEntry[]>;
+  __jobbot_tpm_lock?: Promise<void>;
+}
 const llmG = globalThis as unknown as LlmGlobals;
 if (llmG.__jobbot_rate_limit_until === undefined) llmG.__jobbot_rate_limit_until = 0;
 if (llmG.__jobbot_rate_limit_msg === undefined) llmG.__jobbot_rate_limit_msg = "";
+
+// ── Tokens-per-minute (TPM) pacing ──────────────────────────────────────
+// Groq's free tier caps tokens/minute low (~6k for 8b-instant). The fixed 2s
+// request spacing bounds requests/min but NOT tokens/min, so bursts of ~2k-token
+// fit calls trip 429s. We pace against a rolling 60s per-model token budget.
+const TOKEN_WINDOW_MS = 60_000;
+
+export interface TokenWindowEntry {
+  t: number;
+  tokens: number;
+}
+
+// Pure: tokens spent within the trailing window ending at `now`.
+export function tokensUsedInWindow(
+  window: TokenWindowEntry[],
+  now: number,
+  windowMs: number = TOKEN_WINDOW_MS
+): number {
+  let sum = 0;
+  for (const e of window) if (now - e.t < windowMs) sum += e.tokens;
+  return sum;
+}
+
+// Pure: would adding `est` tokens keep the trailing window within `tpm`?
+export function hasTokenBudget(
+  window: TokenWindowEntry[],
+  now: number,
+  tpm: number,
+  est: number,
+  windowMs: number = TOKEN_WINDOW_MS
+): boolean {
+  return tokensUsedInWindow(window, now, windowMs) + est <= tpm;
+}
+
+function getTokenWindow(key: string): TokenWindowEntry[] {
+  if (!llmG.__jobbot_token_windows) llmG.__jobbot_token_windows = {};
+  if (!llmG.__jobbot_token_windows[key]) llmG.__jobbot_token_windows[key] = [];
+  return llmG.__jobbot_token_windows[key];
+}
+
+// Reserve `est` tokens against the model's per-minute budget, waiting if the
+// trailing-60s window is full. Serialized through a promise-chain lock so
+// concurrent callers (the scraper fires fit analyses without awaiting) pace
+// against one shared budget. Returns the window entry so the caller can
+// reconcile the estimate to actual usage once the response lands.
+async function reserveTokenBudget(
+  key: string,
+  tpm: number,
+  est: number
+): Promise<TokenWindowEntry> {
+  const prev = llmG.__jobbot_tpm_lock ?? Promise.resolve();
+  let release!: () => void;
+  llmG.__jobbot_tpm_lock = new Promise<void>((r) => (release = r));
+  await prev.catch(() => {});
+  try {
+    const window = getTokenWindow(key);
+    for (;;) {
+      const now = Date.now();
+      const live = window.filter((e) => now - e.t < TOKEN_WINDOW_MS);
+      window.length = 0;
+      window.push(...live);
+      // Always let a call through when the window is empty, otherwise a single
+      // call larger than the whole budget would deadlock.
+      if (window.length === 0 || hasTokenBudget(window, now, tpm, est)) {
+        const entry: TokenWindowEntry = { t: now, tokens: est };
+        window.push(entry);
+        return entry;
+      }
+      const oldest = window.reduce((m, e) => Math.min(m, e.t), now);
+      const waitMs = Math.min(
+        TOKEN_WINDOW_MS,
+        Math.max(250, TOKEN_WINDOW_MS - (now - oldest) + 50)
+      );
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  } finally {
+    release();
+  }
+}
 
 export function getRateLimitState(): { rateLimited: boolean; retryAt: number; message: string } {
   return {
@@ -860,7 +1010,8 @@ async function callProvider(
 async function callLlm(
   prompt: string,
   maxTokens: number = 2048,
-  validate?: (text: string) => { ok: true } | { ok: false; errors: string[] }
+  validate?: (text: string) => { ok: true } | { ok: false; errors: string[] },
+  modelOverride?: ActiveModel
 ): Promise<string> {
   // Already-known rate limit — skip the call so we don't burn time and
   // pile up identical 429s. Surfaces as a RateLimitError so callers can
@@ -877,7 +1028,7 @@ async function callLlm(
   }
   llmLastCall = Date.now();
 
-  const model = getActiveModel();
+  const model = modelOverride ?? getActiveModel();
   if (!model) {
     throw new Error(
       "No active provider configured. Complete onboarding to pick a provider."
@@ -890,6 +1041,12 @@ async function callLlm(
       `Active provider is ${model.provider} but ${model.envKey} is not set.`
     );
   }
+
+  // Pace against the model's per-minute token budget. Estimate = prompt tokens
+  // (~chars/4) + the max output, so we reserve conservatively and reconcile to
+  // the real count once the response lands.
+  const estTokens = Math.ceil(prompt.length / 4) + maxTokens;
+  const reservation = await reserveTokenBudget(model.usageKey, model.tpm, estTokens);
 
   const withValidation = (
     fn: () => Promise<LlmResult>
@@ -971,6 +1128,8 @@ async function callLlm(
     throw new Error(`${model.displayName} failed after retries.`);
   }
 
+  // Reconcile the reservation estimate to the real token count.
+  if (result.tokens > 0) reservation.tokens = result.tokens;
   trackUsage(model.usageKey, result.tokens);
   return result.text;
 }
@@ -1294,7 +1453,9 @@ export async function extractJobRequirements(
   const prompt = EXTRACTOR_PROMPT
     .replace("{job_description}", jobDescription.slice(0, 4000))
     .replace("{resume_text}", resumeText.slice(0, 3000));
-  const raw = await callLlm(prompt, 1200);
+  // Routed to the cheaper, higher-quota model — extraction is keyword-pulling,
+  // not the quality-critical résumé rewrite.
+  const raw = await callLlm(prompt, 1200, undefined, getFastModel() ?? undefined);
   const parsed = extractJsonObject(raw) as Record<string, unknown> | null;
   if (!parsed) {
     return { required_keywords: [], preferred_keywords: [], hard_requirements: [] };
@@ -1367,6 +1528,73 @@ export async function analyzeFitScores(
   };
 }
 
+// Pure: turn a parsed combined-fit JSON object + the resume text into both the
+// deterministic scores and the rationale. Extracted so the (fragile) parsing
+// of the merged response is unit-testable without an LLM call, and so it
+// degrades gracefully when fields are missing.
+export function buildFitResult(
+  parsed: Record<string, unknown>,
+  resumeText: string
+): { scores: FitScores; rationale: FitRationale } {
+  const requirements: JobRequirements = {
+    required_keywords: toStringArray(parsed.required_keywords),
+    preferred_keywords: toStringArray(parsed.preferred_keywords),
+    hard_requirements: toHardRequirements(parsed.hard_requirements),
+  };
+  const coverage = calculateKeywordCoverage(
+    requirements.required_keywords,
+    requirements.preferred_keywords,
+    resumeText
+  );
+  const hardreqScore = calculateHardReqScore(requirements.hard_requirements);
+  const parseabilityScore = calculateParseability(resumeText);
+  const fitScore = blendFitScore(coverage.score, hardreqScore, parseabilityScore);
+  const jdKeywords = [
+    ...requirements.required_keywords,
+    ...requirements.preferred_keywords,
+  ].join(", ");
+
+  const scores: FitScores = {
+    fitScore,
+    keywordScore: coverage.score,
+    hardreqScore,
+    parseabilityScore,
+    requirements,
+    matchedRequiredKeywords: coverage.requiredHits,
+    missedRequiredKeywords: coverage.requiredMisses,
+    matchedPreferredKeywords: coverage.preferredHits,
+    missedPreferredKeywords: coverage.preferredMisses,
+    jdKeywords,
+  };
+
+  const strengths = toStringArray(parsed.strengths);
+  const gaps = toStringArray(parsed.gaps);
+  const verdict = typeof parsed.verdict === "string" ? parsed.verdict : "";
+  const jdSummary = typeof parsed.jd_summary === "string" ? parsed.jd_summary : "";
+  const raw = `JD_SUMMARY: ${jdSummary}\nSTRENGTHS: ${strengths.join(", ")}\nGAPS: ${
+    gaps.length ? gaps.join(", ") : "None"
+  }\nVERDICT: ${verdict}`;
+  const rationale: FitRationale = { strengths, gaps, verdict, jdSummary, raw };
+
+  return { scores, rationale };
+}
+
+// Fresh-scrape fit analysis: ONE LLM call returns both the ATS extraction
+// (deterministic scoring) and the rationale text — half the per-job calls of
+// analyzeFitScores + generateFitRationale (which stay for resumable retries).
+export async function analyzeFit(
+  jobDescription: string,
+  masterResumePath: string
+): Promise<{ scores: FitScores; rationale: FitRationale }> {
+  const resumeText = await readResumeTextAsync(masterResumePath);
+  const prompt = COMBINED_FIT_PROMPT
+    .replace("{job_description}", jobDescription.slice(0, 4000))
+    .replace("{resume_text}", resumeText.slice(0, 3000));
+  const raw = await callLlm(prompt, 1400, undefined, getFastModel() ?? undefined);
+  const parsed = (extractJsonObject(raw) as Record<string, unknown> | null) ?? {};
+  return buildFitResult(parsed, resumeText);
+}
+
 // Stage B — slower: rationale text only. Resolves in another ~2-3 s.
 // Independent of Stage A so they can pipeline across many jobs.
 export async function generateFitRationale(
@@ -1377,7 +1605,7 @@ export async function generateFitRationale(
   const rationalePrompt = RATIONALE_PROMPT
     .replace("{job_description}", jobDescription.slice(0, 4000))
     .replace("{resume_text}", resumeText.slice(0, 3000));
-  const raw = await callLlm(rationalePrompt, 512);
+  const raw = await callLlm(rationalePrompt, 512, undefined, getFastModel() ?? undefined);
   return {
     raw,
     strengths: parseFitField(raw, "STRENGTHS")
