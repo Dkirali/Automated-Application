@@ -247,10 +247,10 @@ RESUME:
 const LLM_MIN_INTERVAL = 2000;
 let llmLastCall = 0;
 
-function trackUsage(usageKey: string): void {
+function trackUsage(usageKey: string, tokens: number = 0): void {
   try {
     const { incrementApiUsage } = require("./db");
-    incrementApiUsage(usageKey);
+    incrementApiUsage(usageKey, tokens);
   } catch {
     // non-critical
   }
@@ -757,10 +757,28 @@ function parseRetryAfterMs(message: string): number | null {
 // caller can give up cleanly and the dashboard can back off polling.
 const RATE_LIMIT_INLINE_THRESHOLD_MS = 30_000;
 
+interface LlmResult {
+  text: string;
+  tokens: number;
+}
+
+// Normalizes a provider's completion object to a single token count.
+// Groq + OpenRouter expose usage.total_tokens; Anthropic splits in/out.
+export function extractTokenCount(provider: ActiveProvider, raw: unknown): number {
+  const usage = (raw as {
+    usage?: { total_tokens?: number; input_tokens?: number; output_tokens?: number };
+  })?.usage;
+  if (!usage) return 0;
+  if (provider === "anthropic") {
+    return (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
+  }
+  return usage.total_tokens ?? 0;
+}
+
 async function callProvider(
   name: string,
-  fn: () => Promise<string>
-): Promise<string | null> {
+  fn: () => Promise<LlmResult>
+): Promise<LlmResult | null> {
   const maxRetries = 3;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
@@ -829,23 +847,25 @@ async function callLlm(
     );
   }
 
-  const withValidation = (fn: () => Promise<string>): (() => Promise<string>) => {
+  const withValidation = (
+    fn: () => Promise<LlmResult>
+  ): (() => Promise<LlmResult>) => {
     if (!validate) return fn;
     return async () => {
-      const text = await fn();
-      const result = validate(text);
-      if (!result.ok) {
+      const result = await fn();
+      const check = validate(result.text);
+      if (!check.ok) {
         console.error(
           "[LLM] Validation failed:",
-          result.errors.slice(0, 5).join("; ")
+          check.errors.slice(0, 5).join("; ")
         );
-        throw new Error(`Validation failed: ${result.errors[0] ?? "unknown"}`);
+        throw new Error(`Validation failed: ${check.errors[0] ?? "unknown"}`);
       }
-      return text;
+      return result;
     };
   };
 
-  const callers: Record<ActiveProvider, () => Promise<string>> = {
+  const callers: Record<ActiveProvider, () => Promise<LlmResult>> = {
     groq: async () => {
       const Groq = require("groq-sdk");
       const client = new Groq({ apiKey });
@@ -856,7 +876,7 @@ async function callLlm(
         top_p: 0.1,
         messages: [{ role: "user", content: prompt }],
       });
-      return message.choices[0].message.content;
+      return { text: message.choices[0].message.content, tokens: extractTokenCount("groq", message) };
     },
     anthropic: async () => {
       const Anthropic =
@@ -869,7 +889,7 @@ async function callLlm(
         top_p: 0.1,
         messages: [{ role: "user", content: prompt }],
       });
-      return message.content[0].text;
+      return { text: message.content[0].text, tokens: extractTokenCount("anthropic", message) };
     },
     openrouter: async () => {
       const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -894,7 +914,7 @@ async function callLlm(
       const data = await resp.json();
       const content = data.choices?.[0]?.message?.content;
       if (!content) throw new Error(`Empty response from ${model.modelId}`);
-      return content;
+      return { text: content, tokens: extractTokenCount("openrouter", data) };
     },
   };
 
@@ -907,8 +927,8 @@ async function callLlm(
     throw new Error(`${model.displayName} failed after retries.`);
   }
 
-  trackUsage(model.usageKey);
-  return result;
+  trackUsage(model.usageKey, result.tokens);
+  return result.text;
 }
 
 // ── DOCX generation ───────────────────────────────────────────────────
