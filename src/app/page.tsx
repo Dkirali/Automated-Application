@@ -7,11 +7,9 @@ import {
   getAllCampaigns,
   getConfig,
 } from "@/lib/db";
-import { AVAILABLE_MODELS, getLastModelUsed, parseFitScore, parseFitField } from "@/lib/resume";
+import { parseFitScore, parseFitField } from "@/lib/resume";
 import { getAlert } from "@/lib/campaign";
-import { existsSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import { isLinkedinConnected } from "@/lib/linkedin";
 import DashboardClient from "./DashboardClient";
 
 export const dynamic = "force-dynamic";
@@ -35,16 +33,17 @@ export default function Dashboard() {
   const resumePath = getConfig("master_resume_path");
   const resumeName = resumePath ? resumePath.split("/").pop() : null;
 
-  const linkedinConnected = existsSync(
-    join(homedir(), ".jobbot-chrome", "Default", "Cookies")
-  );
+  const linkedinConnected = isLinkedinConnected();
 
-  // Parse fit data for pending jobs
+  // Parse fit data for pending jobs.
+  // Prefer the deterministic fit_score column; fall back to parsing legacy
+  // fit_summary text for rows scored before the v2 pipeline existed.
   const pendingWithFit = pending.map((job) => {
     const raw = job.fit_summary || "";
+    const storedFit = typeof job.fit_score === "number" ? job.fit_score : null;
     return {
       ...job,
-      fit_score: parseFitScore(raw),
+      fit_score: storedFit ?? parseFitScore(raw),
       verdict: parseFitField(raw, "VERDICT"),
       fit_strengths: parseFitField(raw, "STRENGTHS")
         .split(",")
@@ -57,28 +56,15 @@ export default function Dashboard() {
     };
   });
 
-  // Determine configured models
-  const configuredModels = new Set<string>();
-  if (process.env.GROQ_API_KEY) configuredModels.add("groq/llama-3.3-70b");
-  if (process.env.OPENROUTER_API_KEY) {
-    configuredModels.add("openrouter/gpt-oss-120b");
-    configuredModels.add("openrouter/minimax-m2.5");
-    configuredModels.add("openrouter/free");
-  }
-  if (process.env.ANTHROPIC_API_KEY) configuredModels.add("anthropic/claude-sonnet");
-
   return (
     <DashboardClient
       stats={stats}
       linkedinConnected={linkedinConnected}
       resumeName={resumeName}
-      activeModel={getLastModelUsed()}
       pendingJobs={pendingWithFit}
       applications={applications}
       campaigns={campaigns}
       alert={getAlert()}
-      availableModels={AVAILABLE_MODELS}
-      configuredModels={Array.from(configuredModels)}
     />
   );
 }

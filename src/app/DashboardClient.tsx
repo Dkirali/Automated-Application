@@ -6,41 +6,37 @@ import {
   resolveCampaignButtonLabel,
   resolveCampaignButtonClass,
 } from "@/lib/campaign-ui";
+import { gaugeLevel } from "@/lib/usage-ui";
 
 type FilterMode = "all" | "easy" | "manual" | "tailored" | "untailored";
+
+interface UsageState {
+  tokens: number;
+  dailyLimit: number;
+  pct: number;
+  warn: boolean;
+  rateLimited: boolean;
+  retryAt: number;
+}
 
 interface DashboardProps {
   stats: { applied: number; manual: number; status: string };
   linkedinConnected: boolean;
   resumeName: string | null | undefined;
-  activeModel: string;
   pendingJobs: Record<string, any>[];
   applications: Record<string, any>[];
   campaigns: Record<string, any>[];
   alert: string | null;
-  availableModels: Record<string, string>;
-  configuredModels: string[];
 }
-
-const MODEL_SOFT_LIMITS: Record<string, number> = {
-  "groq/llama-3.3-70b": 30,
-  "openrouter/gpt-oss-120b": 100,
-  "openrouter/minimax-m2.5": 100,
-  "openrouter/free": 50,
-  "anthropic/claude-sonnet": 20,
-};
 
 export default function DashboardClient({
   stats,
   linkedinConnected: initialLinkedIn,
   resumeName,
-  activeModel,
   pendingJobs,
   applications,
   campaigns,
   alert: initialAlert,
-  availableModels,
-  configuredModels,
 }: DashboardProps) {
   const [statusText, setStatusText] = useState("Starting up…");
   const [isRunning, setIsRunning] = useState(stats.status === "running");
@@ -54,8 +50,49 @@ export default function DashboardClient({
   const [appsPage, setAppsPage] = useState(1);
   const [appsPageSize, setAppsPageSize] = useState(20);
   const [fitModalJob, setFitModalJob] = useState<Record<string, any> | null>(null);
-  const [usage, setUsage] = useState<Record<string, number>>({});
   const lastPendingCount = useRef(pendingJobs.length);
+
+  const [usage, setUsage] = useState<UsageState | null>(null);
+  const [alertsEnabled, setAlertsEnabled] = useState(false);
+  const warnedRef = useRef(false);
+
+  const enableAlerts = useCallback(async () => {
+    if (typeof Notification === "undefined") return;
+    const perm = await Notification.requestPermission();
+    setAlertsEnabled(perm === "granted");
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const u: UsageState = await fetch("/api/usage").then((r) => r.json());
+        if (cancelled) return;
+        setUsage(u);
+        if (u.warn && !warnedRef.current) {
+          warnedRef.current = true;
+          if (
+            alertsEnabled &&
+            typeof Notification !== "undefined" &&
+            Notification.permission === "granted"
+          ) {
+            new Notification("JobBot", {
+              body: `${Math.round(u.pct * 100)}% of your daily ${u.dailyLimit.toLocaleString()} token limit used.`,
+            });
+          }
+        }
+        if (!u.warn) warnedRef.current = false;
+      } catch {
+        // retry next tick
+      }
+    };
+    tick();
+    const id = setInterval(tick, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [alertsEnabled]);
 
   // Poll status
   useEffect(() => {
@@ -76,20 +113,45 @@ export default function DashboardClient({
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch usage on mount
-  useEffect(() => {
-    fetch("/api/usage")
-      .then((r) => r.json())
-      .then(setUsage)
-      .catch(() => {});
-  }, []);
+  // Keep retrying fit analysis until every pending job has both a score
+  // and a rationale, regardless of whether a campaign is running.
+  // When the LLM is rate-limited we back off until past `retryAt` instead
+  // of hammering the API every 30 s and racking up 429s.
+  const [llmRateLimited, setLlmRateLimited] = useState<{ retryAt: number; message: string } | null>(null);
 
-  // Trigger fit analysis for stale jobs on mount
   useEffect(() => {
-    const hasStale = pendingJobs.some((j) => !j.fit_summary);
-    if (hasStale) {
-      fetch("/api/retry-fit", { method: "POST" }).catch(() => {});
-    }
+    const hasStale = pendingJobs.some(
+      (j) => j.fit_score === null || j.fit_score === undefined || !j.fit_summary
+    );
+    if (!hasStale) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const status = await fetch("/api/retry-fit").then((r) => r.json());
+        if (status.rateLimited) {
+          setLlmRateLimited({ retryAt: status.retryAt, message: status.message });
+          return; // don't fire POST while the API is hard-blocked
+        }
+        setLlmRateLimited(null);
+        const res = await fetch("/api/retry-fit", { method: "POST" });
+        const body = await res.json().catch(() => ({}));
+        if (body?.reason === "rate_limited") {
+          setLlmRateLimited({ retryAt: body.retryAt, message: body.message });
+        }
+      } catch {
+        // ignore — try again next tick
+      }
+    };
+
+    tick();
+    const interval = setInterval(tick, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [pendingJobs]);
 
   // Animated stat counter
@@ -190,9 +252,6 @@ export default function DashboardClient({
               <button onClick={connectLinkedIn} className="li-pill-btn">Connect</button>
             )}
           </span>
-          {activeModel && activeModel !== "—" && (
-            <span className="model-pill" title="Last used LLM model">🤖 {activeModel}</span>
-          )}
           <a href="/settings" className="icon-link">⚙ Settings</a>
         </div>
       </div>
@@ -206,6 +265,13 @@ export default function DashboardClient({
 
       {/* Alert */}
       {initialAlert && <div className="alert alert-warning">⚠ {initialAlert}</div>}
+      {llmRateLimited && llmRateLimited.retryAt > Date.now() && (
+        <div className="alert alert-warning">
+          ⚠ LLM rate-limited — fit analysis paused until{" "}
+          {new Date(llmRateLimited.retryAt).toLocaleTimeString()}. Upgrade your
+          Groq tier or wait for the daily window to reset.
+        </div>
+      )}
 
       {/* Live Activity Bar */}
       <div className={`activity-bar ${isRunning ? "visible" : ""}`}>
@@ -238,6 +304,42 @@ export default function DashboardClient({
         </div>
       </div>
 
+      {/* Daily API limit gauge */}
+      {usage && (
+        <div className={`limit-gauge ${gaugeLevel(usage.pct, usage.rateLimited)}`}>
+          <div className="limit-gauge-head">
+            <span>
+              Daily API usage ({usage.tokens.toLocaleString()} /{" "}
+              {usage.dailyLimit.toLocaleString()} tokens)
+            </span>
+            <span>{Math.round(usage.pct * 100)}%</span>
+          </div>
+          <div className="limit-gauge-track">
+            <div
+              className="limit-gauge-fill"
+              style={{ width: `${Math.min(usage.pct * 100, 100)}%` }}
+            />
+          </div>
+          {usage.rateLimited && usage.retryAt > Date.now() && (
+            <p className="limit-gauge-note">
+              ⚠ Rate-limited — runs auto-stopped. Resets ~
+              {new Date(usage.retryAt).toLocaleTimeString()}.
+            </p>
+          )}
+          {typeof window !== "undefined" &&
+            "Notification" in window &&
+            !alertsEnabled && (
+              <button
+                type="button"
+                className="limit-gauge-alerts"
+                onClick={enableAlerts}
+              >
+                Enable alerts
+              </button>
+            )}
+        </div>
+      )}
+
       {/* Campaign Controls */}
       <div className="campaign-card">
         <div className="campaign-card-title">New Campaign</div>
@@ -249,7 +351,7 @@ export default function DashboardClient({
             </div>
             <div className="form-group">
               <label className="form-label" htmlFor="location_text">Location</label>
-              <input className="form-input" type="text" id="location_text" name="location_text" placeholder="Istanbul, London" disabled={isRunning} />
+              <input className="form-input" type="text" id="location_text" name="location_text" placeholder="City, Country or Remote" disabled={isRunning} />
             </div>
           </div>
 
@@ -284,33 +386,6 @@ export default function DashboardClient({
                 <option value="r604800">Past week</option>
                 <option value="r2592000">Past month</option>
               </select>
-            </div>
-          </div>
-
-          {/* Model Selector */}
-          <div className="model-select-row">
-            <div className="form-label">AI Model for Tailoring</div>
-            <div className="model-options">
-              {Object.entries(availableModels).map(([key, label]) => {
-                const isConfigured = key === "auto" || configuredModels.includes(key);
-                const usageCount = usage[key] || 0;
-                const limit = MODEL_SOFT_LIMITS[key] || 100;
-                const pct = Math.min((usageCount / limit) * 100, 100);
-                return (
-                  <label key={key} className={`model-option ${!isConfigured ? "not-configured" : ""}`}>
-                    <input type="radio" name="preferred_model" value={key} defaultChecked={key === "auto"} disabled={!isConfigured || isRunning} />
-                    <span className="model-option-name">{label}</span>
-                    {key !== "auto" && isConfigured && usageCount > 0 && (
-                      <div className="model-option-usage">
-                        <span className="model-usage-bar">
-                          <span className={`usage-fill ${pct >= 80 ? "high" : pct >= 50 ? "medium" : ""}`} style={{ width: `${pct}%` }} />
-                        </span>
-                        <span className="usage-count">{usageCount}</span>
-                      </div>
-                    )}
-                  </label>
-                );
-              })}
             </div>
           </div>
 
@@ -544,7 +619,6 @@ export default function DashboardClient({
                   <div className="campaign-row-meta">
                     {c.started_at?.slice(0, 10)}
                     {c.locations && c.locations !== "None" ? ` · ${c.locations}` : ""}
-                    {c.preferred_model && c.preferred_model !== "auto" ? ` · ${c.preferred_model}` : ""}
                   </div>
                 </div>
                 <div className="campaign-row-stats">

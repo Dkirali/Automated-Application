@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
       if (!jd) continue;
 
       try {
-        const tailor = await tailorResume(job.id, jd, masterPath, undefined, "auto");
+        const tailor = await tailorResume(job.id, jd, masterPath, undefined);
         updateApplication(job.id, "reviewed", {
           atsScore: tailor.atsScore,
           originalAtsScore: tailor.originalAtsScore,
@@ -35,6 +35,11 @@ export async function POST(request: NextRequest) {
         updateApplication(job.id, "reviewed", {
           fitSummary: fit.raw,
           jdSummary: fit.jdSummary,
+          fitScore: fit.fitScore,
+          keywordScore: fit.keywordScore,
+          hardreqScore: fit.hardreqScore,
+          parseabilityScore: fit.parseabilityScore,
+          requirementsJson: JSON.stringify(fit.requirements),
         });
       } catch {
         // non-fatal

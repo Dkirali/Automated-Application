@@ -13,9 +13,6 @@ export async function POST(
     return NextResponse.redirect(new URL("/", request.url), 303);
   }
 
-  const formData = await request.formData();
-  const preferredModel = (formData.get("model") as string) || "auto";
-
   // Preserve existing keywords for ATS score stability
   const storedKeywordsStr = job.keywords || "";
   const storedKeywords = storedKeywordsStr
@@ -41,8 +38,7 @@ export async function POST(
         appId,
         jd,
         masterPath,
-        storedKeywords.length ? storedKeywords : undefined,
-        preferredModel
+        storedKeywords.length ? storedKeywords : undefined
       );
       updateApplication(appId, "reviewed", {
         atsScore: tailor.atsScore,

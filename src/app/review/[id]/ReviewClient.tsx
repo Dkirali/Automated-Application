@@ -9,6 +9,12 @@ interface FitCategoryView {
   rationale: string;
 }
 
+interface HardReqView {
+  text: string;
+  met: boolean;
+  evidence?: string;
+}
+
 interface ReviewClientProps {
   job: Record<string, any>;
   fit: {
@@ -19,8 +25,16 @@ interface ReviewClientProps {
     jd_summary: string | null;
     jd_keywords: string | null;
     categories: FitCategoryView[];
+    requirements: {
+      required_keywords: string[];
+      preferred_keywords: string[];
+      hard_requirements: HardReqView[];
+    } | null;
+    matchedRequired: string[];
+    missedRequired: string[];
+    matchedPreferred: string[];
+    missedPreferred: string[];
   };
-  availableModels: Record<string, string>;
   tailoringInProgress: boolean;
 }
 
@@ -75,25 +89,121 @@ function highlightKeywords(container: HTMLElement, keywords: string[]): number {
   return matched.size;
 }
 
-export default function ReviewClient({ job, fit, availableModels, tailoringInProgress }: ReviewClientProps) {
+type ApplyView = {
+  state:
+    | "idle"
+    | "starting"
+    | "opening"
+    | "easy_apply_click"
+    | "filling"
+    | "submitting"
+    | "awaiting_user"
+    | "applied"
+    | "failed";
+  message: string;
+  error?: string;
+};
+
+const APPLY_TERMINAL = new Set(["applied", "failed"]);
+
+export default function ReviewClient({ job, fit, tailoringInProgress }: ReviewClientProps) {
   const [resumeHtml, setResumeHtml] = useState<string | null>(null);
   const [resumeError, setResumeError] = useState(false);
   const [kwMatchCount, setKwMatchCount] = useState<number | null>(null);
   const [isTailoring, setIsTailoring] = useState(tailoringInProgress);
   const [currentJob, setCurrentJob] = useState(job);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [overrideLowFit, setOverrideLowFit] = useState(false);
+  const [apply, setApply] = useState<ApplyView>({ state: "idle", message: "" });
   const resumeRef = useRef<HTMLDivElement>(null);
+  const applyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoTailorTriggered = useRef(false);
 
   const scoreClass = (s: number) => (s >= 70 ? "high" : s >= 40 ? "medium" : "low");
+  const lowFit = fit.fit_score > 0 && fit.fit_score < 50;
+  const submitDisabled = apply.state !== "idle" && apply.state !== "failed";
 
-  const handleRetailor = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
+  const startTailor = async () => {
     setIsTailoring(true);
     setResumeHtml(null);
     setResumeError(false);
     setKwMatchCount(null);
-    await fetch(`/api/retailor/${currentJob.id}`, { method: "POST", body: formData });
+    await fetch(`/api/retailor/${currentJob.id}`, { method: "POST", body: new FormData() });
   };
+
+  const handleRetailor = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    await startTailor();
+  };
+
+  // Auto-tailor on first open if no tailored resume exists yet.
+  useEffect(() => {
+    if (autoTailorTriggered.current) return;
+    if (isTailoring) return;
+    if (currentJob.resume_path) return;
+    autoTailorTriggered.current = true;
+    startTailor();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openConfirm = () => {
+    setOverrideLowFit(false);
+    setShowConfirm(true);
+  };
+
+  const submitApply = async () => {
+    setShowConfirm(false);
+    setApply({ state: "starting", message: "Launching browser…" });
+    try {
+      const r = await fetch(`/api/apply/${currentJob.id}`, { method: "POST" });
+      if (r.status === 409) {
+        setApply({ state: "failed", message: "An apply is already in progress for this job." });
+        return;
+      }
+      if (!r.ok) {
+        setApply({ state: "failed", message: `Could not start: HTTP ${r.status}` });
+        return;
+      }
+    } catch (e) {
+      setApply({ state: "failed", message: `Network error: ${e instanceof Error ? e.message : String(e)}` });
+      return;
+    }
+    // Polling effect picks up from here
+  };
+
+  // Poll apply status while a submission is in flight
+  useEffect(() => {
+    if (apply.state === "idle" || APPLY_TERMINAL.has(apply.state)) {
+      if (applyPollRef.current) {
+        clearInterval(applyPollRef.current);
+        applyPollRef.current = null;
+      }
+      return;
+    }
+    if (applyPollRef.current) return;
+    applyPollRef.current = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/apply-status/${currentJob.id}`);
+        const data = await r.json();
+        setApply({ state: data.state, message: data.message || "", error: data.error });
+        if (APPLY_TERMINAL.has(data.state)) {
+          if (data.state === "applied") {
+            setCurrentJob((p: Record<string, any>) => ({ ...p, status: "applied" }));
+          } else if (data.state === "failed") {
+            setCurrentJob((p: Record<string, any>) => ({ ...p, status: "failed" }));
+          }
+        }
+      } catch {
+        // transient — keep polling
+      }
+    }, 2000);
+    return () => {
+      if (applyPollRef.current) {
+        clearInterval(applyPollRef.current);
+        applyPollRef.current = null;
+      }
+    };
+  }, [apply.state, currentJob.id]);
 
   const orig = currentJob.original_ats_score || 0;
   const tail = currentJob.ats_score || 0;
@@ -301,6 +411,60 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
               </div>
             ))}
           </div>
+
+          {fit.requirements && (
+            <div className="fit-detail">
+              {(fit.matchedRequired.length > 0 || fit.missedRequired.length > 0) && (
+                <div className="fit-detail-block">
+                  <div className="fit-detail-title">Required keywords</div>
+                  <div className="fit-detail-chips">
+                    {fit.matchedRequired.map((k) => (
+                      <span key={`mr-${k}`} className="fit-chip fit-chip--hit">✓ {k}</span>
+                    ))}
+                    {fit.missedRequired.map((k) => (
+                      <span key={`xr-${k}`} className="fit-chip fit-chip--miss">✗ {k}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(fit.matchedPreferred.length > 0 || fit.missedPreferred.length > 0) && (
+                <div className="fit-detail-block">
+                  <div className="fit-detail-title">Preferred keywords</div>
+                  <div className="fit-detail-chips">
+                    {fit.matchedPreferred.map((k) => (
+                      <span key={`mp-${k}`} className="fit-chip fit-chip--hit fit-chip--soft">✓ {k}</span>
+                    ))}
+                    {fit.missedPreferred.map((k) => (
+                      <span key={`xp-${k}`} className="fit-chip fit-chip--miss fit-chip--soft">✗ {k}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {fit.requirements.hard_requirements.length > 0 && (
+                <div className="fit-detail-block">
+                  <div className="fit-detail-title">Hard requirements</div>
+                  <ul className="fit-hardreq-list">
+                    {fit.requirements.hard_requirements.map((r, idx) => (
+                      <li
+                        key={idx}
+                        className={`fit-hardreq ${r.met ? "fit-hardreq--met" : "fit-hardreq--missing"}`}
+                      >
+                        <span className="fit-hardreq-icon" aria-hidden>{r.met ? "✓" : "✗"}</span>
+                        <div>
+                          <div className="fit-hardreq-text">{r.text}</div>
+                          {r.evidence && r.met && (
+                            <div className="fit-hardreq-evidence">{r.evidence}</div>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
 
@@ -348,11 +512,6 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
               )}
               {currentJob.resume_path && <a href={`/api/download/${currentJob.id}`} className="btn-download">↓ PDF</a>}
               <form onSubmit={handleRetailor} className="retailor-form-inline">
-                <select name="model" className="model-select-inline" title="Choose LLM model">
-                  {Object.entries(availableModels).map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
                 <button type="submit" className="btn-retailor" disabled={isTailoring}>⟳ Re-tailor</button>
               </form>
             </div>
@@ -372,7 +531,7 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
               <div className="resume-not-tailored">
                 <div className="resume-not-tailored-icon">◈</div>
                 <div className="resume-not-tailored-msg">Resume not tailored yet</div>
-                <div className="resume-not-tailored-hint">Select a model above and click Re-tailor to generate your tailored resume for this role.</div>
+                <div className="resume-not-tailored-hint">Click Re-tailor to generate your tailored resume for this role.</div>
               </div>
             ) : resumeError ? (
               <p className="empty-note">Could not load resume.</p>
@@ -387,16 +546,122 @@ export default function ReviewClient({ job, fit, availableModels, tailoringInPro
         </div>
       </div>
 
+      {/* Apply progress strip */}
+      {apply.state !== "idle" && (
+        <div
+          className={`apply-progress apply-progress--${apply.state}`}
+          role="status"
+          aria-live="polite"
+        >
+          {!APPLY_TERMINAL.has(apply.state) && <span className="spinner spinner-inline" />}
+          <span className="apply-progress-state">
+            {apply.state === "applied"
+              ? "✓ Applied"
+              : apply.state === "failed"
+                ? "✗ Failed"
+                : apply.state === "awaiting_user"
+                  ? "⏸ Awaiting your input"
+                  : "Working…"}
+          </span>
+          <span className="apply-progress-msg">{apply.message}</span>
+        </div>
+      )}
+
       {/* Action Buttons */}
       <div className="review-actions">
-        <form method="POST" action={`/api/apply/${currentJob.id}`}>
-          <button type="submit" className="btn-apply">✓ Apply Now</button>
-        </form>
-        <form method="POST" action={`/api/discard/${currentJob.id}`}>
-          <button type="submit" className="btn-discard">✗ Discard</button>
-        </form>
+        {currentJob.easy_apply && currentJob.status !== "applied" && (
+          <button
+            type="button"
+            className="btn-apply"
+            onClick={openConfirm}
+            disabled={submitDisabled || isTailoring}
+            title={isTailoring ? "Wait for tailoring to finish" : ""}
+          >
+            ✓ Apply Now
+          </button>
+        )}
+        {currentJob.status !== "applied" && (
+          <form method="POST" action={`/api/discard/${currentJob.id}`}>
+            <button type="submit" className="btn-discard">✗ Discard</button>
+          </form>
+        )}
         <a href="/" className="btn-back-dash">Back to Dashboard</a>
       </div>
+
+      {/* Confirmation modal */}
+      {showConfirm && (
+        <div
+          className="apply-confirm-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setShowConfirm(false)}
+        >
+          <div className="apply-confirm" onClick={(e) => e.stopPropagation()}>
+            <h3 className="apply-confirm-title">Submit this application?</h3>
+            <p className="apply-confirm-sub">
+              JobBot will open Chrome and submit Easy Apply on LinkedIn for{" "}
+              <strong>{currentJob.title}</strong> at <strong>{currentJob.company}</strong>.
+            </p>
+
+            <dl className="apply-confirm-list">
+              <div>
+                <dt>Resume</dt>
+                <dd>
+                  {currentJob.resume_path
+                    ? currentJob.resume_path.split("/").pop()
+                    : "Master resume (not tailored)"}
+                </dd>
+              </div>
+              <div>
+                <dt>Fit score</dt>
+                <dd>
+                  <span className={`fit-score-badge fit-score--${scoreClass(fit.fit_score)}`}>
+                    {fit.fit_score}%
+                  </span>
+                </dd>
+              </div>
+            </dl>
+
+            {lowFit && (
+              <div className="apply-confirm-warning">
+                <strong>Low fit ({fit.fit_score}%).</strong> Applying anyway can hurt your
+                signal-to-noise ratio with this employer.
+                <label className="apply-confirm-override">
+                  <input
+                    type="checkbox"
+                    checked={overrideLowFit}
+                    onChange={(e) => setOverrideLowFit(e.target.checked)}
+                  />
+                  <span>Apply anyway</span>
+                </label>
+              </div>
+            )}
+
+            <p className="apply-confirm-note">
+              If LinkedIn asks for fields the bot can&apos;t answer (years of experience,
+              salary, etc.), the Chrome window stays open so you can finish manually.
+            </p>
+
+            <div className="apply-confirm-actions">
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setShowConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-apply"
+                disabled={lowFit && !overrideLowFit}
+                onClick={submitApply}
+              >
+                Submit application
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
