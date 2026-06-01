@@ -79,6 +79,8 @@ export interface ActiveModel {
   displayName: string;
   envKey: string;
   usageKey: string;
+  /** Free-tier tokens-per-minute budget — paces calls to avoid 429s. */
+  tpm: number;
 }
 
 export const PROVIDER_MODELS: Record<ActiveProvider, ActiveModel> = {
@@ -88,6 +90,7 @@ export const PROVIDER_MODELS: Record<ActiveProvider, ActiveModel> = {
     displayName: "Groq / Llama 3.3 70B",
     envKey: "GROQ_API_KEY",
     usageKey: "groq/llama-3.3-70b",
+    tpm: 12_000,
   },
   anthropic: {
     provider: "anthropic",
@@ -95,6 +98,7 @@ export const PROVIDER_MODELS: Record<ActiveProvider, ActiveModel> = {
     displayName: "Anthropic / Claude Sonnet",
     envKey: "ANTHROPIC_API_KEY",
     usageKey: "anthropic/claude-sonnet",
+    tpm: 20_000,
   },
   openrouter: {
     provider: "openrouter",
@@ -102,6 +106,7 @@ export const PROVIDER_MODELS: Record<ActiveProvider, ActiveModel> = {
     displayName: "OpenRouter / GPT-OSS 120B",
     envKey: "OPENROUTER_API_KEY",
     usageKey: "openrouter/gpt-oss-120b",
+    tpm: 20_000,
   },
 };
 
@@ -128,6 +133,7 @@ export const PROVIDER_FAST_MODELS: Record<ActiveProvider, ActiveModel> = {
     displayName: "Groq / Llama 3.1 8B",
     envKey: "GROQ_API_KEY",
     usageKey: "groq/llama-3.1-8b",
+    tpm: 6_000,
   },
   anthropic: {
     provider: "anthropic",
@@ -135,6 +141,7 @@ export const PROVIDER_FAST_MODELS: Record<ActiveProvider, ActiveModel> = {
     displayName: "Anthropic / Claude Haiku",
     envKey: "ANTHROPIC_API_KEY",
     usageKey: "anthropic/claude-haiku",
+    tpm: 30_000,
   },
   openrouter: PROVIDER_MODELS.openrouter,
 };
@@ -770,10 +777,94 @@ export class RateLimitError extends Error {
 }
 
 // Module-level rate-limit state. Stashed on globalThis so HMR doesn't fork it.
-interface LlmGlobals { __jobbot_rate_limit_until: number; __jobbot_rate_limit_msg: string }
+interface LlmGlobals {
+  __jobbot_rate_limit_until: number;
+  __jobbot_rate_limit_msg: string;
+  __jobbot_token_windows?: Record<string, TokenWindowEntry[]>;
+  __jobbot_tpm_lock?: Promise<void>;
+}
 const llmG = globalThis as unknown as LlmGlobals;
 if (llmG.__jobbot_rate_limit_until === undefined) llmG.__jobbot_rate_limit_until = 0;
 if (llmG.__jobbot_rate_limit_msg === undefined) llmG.__jobbot_rate_limit_msg = "";
+
+// ── Tokens-per-minute (TPM) pacing ──────────────────────────────────────
+// Groq's free tier caps tokens/minute low (~6k for 8b-instant). The fixed 2s
+// request spacing bounds requests/min but NOT tokens/min, so bursts of ~2k-token
+// fit calls trip 429s. We pace against a rolling 60s per-model token budget.
+const TOKEN_WINDOW_MS = 60_000;
+
+export interface TokenWindowEntry {
+  t: number;
+  tokens: number;
+}
+
+// Pure: tokens spent within the trailing window ending at `now`.
+export function tokensUsedInWindow(
+  window: TokenWindowEntry[],
+  now: number,
+  windowMs: number = TOKEN_WINDOW_MS
+): number {
+  let sum = 0;
+  for (const e of window) if (now - e.t < windowMs) sum += e.tokens;
+  return sum;
+}
+
+// Pure: would adding `est` tokens keep the trailing window within `tpm`?
+export function hasTokenBudget(
+  window: TokenWindowEntry[],
+  now: number,
+  tpm: number,
+  est: number,
+  windowMs: number = TOKEN_WINDOW_MS
+): boolean {
+  return tokensUsedInWindow(window, now, windowMs) + est <= tpm;
+}
+
+function getTokenWindow(key: string): TokenWindowEntry[] {
+  if (!llmG.__jobbot_token_windows) llmG.__jobbot_token_windows = {};
+  if (!llmG.__jobbot_token_windows[key]) llmG.__jobbot_token_windows[key] = [];
+  return llmG.__jobbot_token_windows[key];
+}
+
+// Reserve `est` tokens against the model's per-minute budget, waiting if the
+// trailing-60s window is full. Serialized through a promise-chain lock so
+// concurrent callers (the scraper fires fit analyses without awaiting) pace
+// against one shared budget. Returns the window entry so the caller can
+// reconcile the estimate to actual usage once the response lands.
+async function reserveTokenBudget(
+  key: string,
+  tpm: number,
+  est: number
+): Promise<TokenWindowEntry> {
+  const prev = llmG.__jobbot_tpm_lock ?? Promise.resolve();
+  let release!: () => void;
+  llmG.__jobbot_tpm_lock = new Promise<void>((r) => (release = r));
+  await prev.catch(() => {});
+  try {
+    const window = getTokenWindow(key);
+    for (;;) {
+      const now = Date.now();
+      const live = window.filter((e) => now - e.t < TOKEN_WINDOW_MS);
+      window.length = 0;
+      window.push(...live);
+      // Always let a call through when the window is empty, otherwise a single
+      // call larger than the whole budget would deadlock.
+      if (window.length === 0 || hasTokenBudget(window, now, tpm, est)) {
+        const entry: TokenWindowEntry = { t: now, tokens: est };
+        window.push(entry);
+        return entry;
+      }
+      const oldest = window.reduce((m, e) => Math.min(m, e.t), now);
+      const waitMs = Math.min(
+        TOKEN_WINDOW_MS,
+        Math.max(250, TOKEN_WINDOW_MS - (now - oldest) + 50)
+      );
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  } finally {
+    release();
+  }
+}
 
 export function getRateLimitState(): { rateLimited: boolean; retryAt: number; message: string } {
   return {
@@ -951,6 +1042,12 @@ async function callLlm(
     );
   }
 
+  // Pace against the model's per-minute token budget. Estimate = prompt tokens
+  // (~chars/4) + the max output, so we reserve conservatively and reconcile to
+  // the real count once the response lands.
+  const estTokens = Math.ceil(prompt.length / 4) + maxTokens;
+  const reservation = await reserveTokenBudget(model.usageKey, model.tpm, estTokens);
+
   const withValidation = (
     fn: () => Promise<LlmResult>
   ): (() => Promise<LlmResult>) => {
@@ -1031,6 +1128,8 @@ async function callLlm(
     throw new Error(`${model.displayName} failed after retries.`);
   }
 
+  // Reconcile the reservation estimate to the real token count.
+  if (result.tokens > 0) reservation.tokens = result.tokens;
   trackUsage(model.usageKey, result.tokens);
   return result.text;
 }
