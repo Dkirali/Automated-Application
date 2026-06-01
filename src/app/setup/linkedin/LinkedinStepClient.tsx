@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 interface Props {
   initialConnected: boolean;
@@ -9,35 +9,28 @@ interface Props {
 export default function LinkedinStepClient({ initialConnected }: Props) {
   const [connected, setConnected] = useState(initialConnected);
   const [waiting, setWaiting] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
+  const [error, setError] = useState<string | null>(null);
 
   const startConnect = async () => {
     setWaiting(true);
+    setError(null);
     try {
-      await fetch("/api/linkedin-connect", { method: "POST" });
-    } catch {
-      // network failure — keep waiting UI; user can retry
-    }
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const r = await fetch("/api/linkedin-status");
-        const data = await r.json();
-        if (data.connected) {
-          setConnected(true);
-          setWaiting(false);
-          if (pollRef.current) clearInterval(pollRef.current);
-        }
-      } catch {
-        // transient — keep polling
+      // The route blocks until the Chrome window closes, then returns the
+      // VERIFIED result (a real li_at session, not just an opened window).
+      const r = await fetch("/api/linkedin-connect", { method: "POST" });
+      const data = await r.json();
+      if (data.connected) {
+        setConnected(true);
+      } else {
+        setError(
+          "Login wasn't completed — click Connect, sign in fully, then close the window."
+        );
       }
-    }, 2000);
+    } catch {
+      setError("Couldn't reach the app — please try again.");
+    } finally {
+      setWaiting(false);
+    }
   };
 
   return (
@@ -71,6 +64,12 @@ export default function LinkedinStepClient({ initialConnected }: Props) {
               </span>
             </span>
           </div>
+
+          {error && !connected && (
+            <p className="li-error" role="alert">
+              {error}
+            </p>
+          )}
 
           {!connected && (
             <button
