@@ -53,6 +53,24 @@ test.describe("Dashboard — pending jobs render", () => {
   });
 });
 
+test.describe("Dashboard — daily-limit gauge", () => {
+  test.beforeEach(async ({ request }) => {
+    await prepare(request, {
+      setupComplete: true,
+      withApplications: true,
+      linkedinConnected: true,
+    });
+  });
+
+  test("daily API usage gauge is visible on the dashboard", async ({ page }) => {
+    const dash = new DashboardPage(page);
+    await dash.goto();
+    await dash.expectVisible();
+
+    await expect(dash.usageGauge).toBeVisible();
+  });
+});
+
 test.describe("Review page — fit breakdown", () => {
   test.beforeEach(async ({ request }) => {
     await prepare(request, {
