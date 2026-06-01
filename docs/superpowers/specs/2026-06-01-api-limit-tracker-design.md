@@ -22,10 +22,17 @@ wants:
   current code discards it. We will thread it through and persist it.
 - **Daily cap is configurable** via a Settings field (`daily_token_limit` config
   key), defaulting to **100,000** (Groq free-tier TPD).
-- **Auto-stop is the reactive hard guarantee**, fired from the existing 429 path,
-  not from the estimated gauge.
+- **Auto-stop is tiered** — fired from the existing 429 path, not the estimated gauge,
+  but graduated so a transient minute-window limit does **not** kill a long campaign:
+  - **Transient/medium limit** (retry-after below `DAILY_STOP_THRESHOLD_MS = 5 min`
+    *and* usage below the cap) → *pause only* and auto-resume (today's behavior).
+  - **Daily-exhaustion limit** (retry-after ≥ 5 min — daily caps reset at UTC midnight
+    so they return long waits — *or* `totalTokens` already ≥ cap) → **hard-stop the
+    campaign**.
 - **Warn at 80%** of the cap. Threshold is a hardcoded constant (`WARN_THRESHOLD = 0.8`)
   — not exposed in Settings (YAGNI).
+- **Track tokens per active model**, not summed across all models — Groq's cap is
+  per-model. The gauge measures the active model's tokens against the cap.
 - **Notify via the browser Notification API (desktop popup) + in-app banner.**
 
 ## Architecture
@@ -39,8 +46,10 @@ Four small units, each independently testable:
   - `incrementApiUsage(modelKey, tokens = 0)` — bumps `call_count` by 1 and `tokens`
     by the supplied amount in one UPSERT. Backward-compatible default keeps existing
     call sites working.
-  - `getApiUsageToday()` — extended to also sum `tokens` across today's rows; returns
-    `{ counts: Record<string, number>, totalTokens: number }`.
+  - `getApiUsageToday()` — extended to also return per-model tokens; returns
+    `{ counts: Record<string, number>, tokensByModel: Record<string, number> }`.
+    Callers pick the active model's tokens (Groq's cap is per-model); summing across
+    models would conflate distinct caps.
 - **Interface:** pure DB functions, no knowledge of limits or UI.
 
 ### 2. Token capture at the LLM boundary (`src/lib/resume.ts`)
@@ -51,40 +60,48 @@ Four small units, each independently testable:
   call so `incrementApiUsage(usageKey, totalTokens)` records real tokens.
 - No new API calls; only the already-returned usage object is read.
 
-### 3. Auto-stop on rate limit (`src/lib/resume.ts` → `setRateLimited`)
+### 3. Tiered auto-stop on rate limit (`src/lib/resume.ts` → `setRateLimited`)
 - `setRateLimited(retryAtMs, message)` is the single chokepoint already called on every
-  hard 429. Extend it to also halt active work:
-  - call `stopCampaign()` and mark the active campaign `stopped` with
-    `stop_reason = "rate_limited"` (via `getActiveCampaign` / `updateCampaignStatus`).
-  - These are imported lazily (`require("./campaign")`, `require("./db")`) to avoid a
-    circular import, matching the existing `require("./db")` pattern in `trackUsage`.
-- Fit-retry polling already backs off on `getRateLimitState()`, so no change there.
-- **Result:** one real 429 → campaign stopped + fit-retries paused, regardless of what
-  the estimated gauge showed.
+  long 429. Extend it to **conditionally** halt active work:
+  - Compute `isDailyExhaustion = (retryAtMs - Date.now()) >= DAILY_STOP_THRESHOLD_MS`
+    (5 min) `|| getActiveModelTokensToday() >= dailyLimit`.
+  - **Only if `isDailyExhaustion`:** call `stopCampaign()` and mark the active campaign
+    `stopped` with `stop_reason = "rate_limited"` (via `getActiveCampaign` /
+    `updateCampaignStatus`). Imported lazily (`require("./campaign")`, `require("./db")`)
+    to avoid a circular import, matching the existing `require("./db")` in `trackUsage`.
+  - **Otherwise:** leave the existing pause/back-off behavior untouched — the run
+    auto-resumes once `retryAt` passes.
+- Fit-retry polling already backs off on `getRateLimitState()` in both cases.
+- **Result:** a momentary minute-window limit pauses and recovers on its own; a real
+  daily-quota exhaustion hard-stops the campaign + pauses fit-retries.
 
 ### 4. Usage API + dashboard gauge
 - **`/api/usage` (GET)** — extend the response to:
   ```json
   {
-    "totalTokens": 42310,
+    "model": "<active model_key>",
+    "tokens": 42310,
     "dailyLimit": 100000,
     "pct": 0.42,
     "warn": false,
     "rateLimited": false,
     "retryAt": 0,
-    "counts": { "<model_key>": 37 }
+    "calls": 37
   }
   ```
-  `dailyLimit` comes from `getConfig("daily_token_limit")` (fallback 100000).
+  `tokens` = the **active model's** tokens today (`tokensByModel[activeModel]`), not a
+  sum. `dailyLimit` comes from `getConfig("daily_token_limit")` (fallback 100000).
   `warn = pct >= 0.8`. `rateLimited` / `retryAt` come from `getRateLimitState()`.
 - **`DashboardClient.tsx`** — new `LimitGauge` sub-component:
   - Polls `/api/usage` every 15 s (independent of the 2 s status poll).
   - Renders a labeled progress bar: `42,310 / 100,000 tokens today (42%)`.
   - Color states: normal (<80%), warn (≥80%, amber), blocked (rate-limited, red, shows
     "resets/​retry at <time>").
-  - On crossing 80% for the first time this session, fire a desktop notification
-    ("JobBot: 80% of your daily Groq token limit used") — guarded by a `useRef` so it
-    fires once per session, and request `Notification.permission` on first dashboard load.
+  - An "Enable alerts" toggle on the gauge requests `Notification.permission` **on that
+    click** (a user gesture — never on page load, which browsers auto-deny). If granted,
+    crossing 80% for the first time this session fires a desktop notification
+    ("JobBot: 80% of your daily Groq token limit used"), guarded by a `useRef` so it
+    fires once per session. If denied/unsupported, degrade silently to the in-app banner.
   - When `rateLimited` is true, surface the existing red banner copy (reuse current
     `llmRateLimited` styling) and note that runs were auto-stopped.
 - **`src/app/settings/...`** — add a "Daily token limit" number input writing the
@@ -95,11 +112,12 @@ Four small units, each independently testable:
 ```
 LLM call (resume.ts) ──usage.total_tokens──▶ incrementApiUsage(model, tokens) ──▶ api_usage.tokens
                                                                                         │
-429 ──▶ setRateLimited() ──▶ stopCampaign() + mark campaign stopped(rate_limited)       │
+long 429 ──▶ setRateLimited() ──▶ daily-exhaustion? ──yes──▶ stopCampaign() + stopped(rate_limited)
+                                          └──no──▶ pause + auto-resume after retryAt    │
                                                                                         ▼
-Dashboard ──poll 15s──▶ GET /api/usage ──▶ {totalTokens, dailyLimit, pct, warn, rateLimited}
+Dashboard ──poll 15s──▶ GET /api/usage ──▶ {model, tokens, dailyLimit, pct, warn, rateLimited}
                                                 │
-                                       LimitGauge: bar + color + once-per-session desktop notify at ≥80%
+                                  LimitGauge: bar + color + (if alerts enabled) once-per-session notify ≥80%
 ```
 
 ## Error handling
@@ -116,10 +134,12 @@ Dashboard ──poll 15s──▶ GET /api/usage ──▶ {totalTokens, dailyLi
 
 - **Unit (`tests/db.test.ts`):** `incrementApiUsage` accumulates tokens; `getApiUsageToday`
   sums tokens; the ALTER is idempotent.
-- **Unit (resume):** `setRateLimited` triggers `stopCampaign` + campaign status update
-  (mock campaign/db); provider parsing maps a usage object to `totalTokens`.
-- **Unit (usage route):** `/api/usage` computes `pct` and `warn` correctly across
-  boundaries (0%, 79%, 80%, 100%, rate-limited).
+- **Unit (resume):** `setRateLimited` with a **long** retry-after (or usage ≥ cap)
+  triggers `stopCampaign` + campaign status update; a **short** retry-after does **not**
+  stop the campaign (mock campaign/db). Provider parsing maps a usage object to
+  `totalTokens`.
+- **Unit (usage route):** `/api/usage` reports the **active model's** tokens and computes
+  `pct`/`warn` correctly across boundaries (0%, 79%, 80%, 100%, rate-limited).
 - **E2E (`tests/e2e/app.spec.ts`):** gauge renders on the dashboard and reflects a seeded
   usage row; reuse `JOBBOT_TEST_MODE` to inject usage without real LLM calls.
 - **Real-key smoke (per project rule):** run a short campaign with the live Groq key,
