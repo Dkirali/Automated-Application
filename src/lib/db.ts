@@ -1,27 +1,41 @@
 import Database from "better-sqlite3";
 
-let _db: Database.Database | null = null;
-let _initialized = false;
+// Next.js dev mode re-evaluates modules across HMR boundaries, which creates
+// multiple module instances each with their own `_db`. Stashing on globalThis
+// guarantees a single shared singleton for the process lifetime — required
+// so that `/api/test-reset` actually closes the same connection that page
+// renders are reading from.
+interface DbGlobals {
+  __jobbot_db: Database.Database | null;
+  __jobbot_db_initialized: boolean;
+}
+const g = globalThis as unknown as DbGlobals;
+if (g.__jobbot_db === undefined) g.__jobbot_db = null;
+if (g.__jobbot_db_initialized === undefined) g.__jobbot_db_initialized = false;
 
 export function getConn(): Database.Database {
-  if (!_db) {
+  if (!g.__jobbot_db) {
     const dbPath = process.env.JOBBOT_DB || "jobbot.db";
-    _db = new Database(dbPath);
-    _db.pragma("journal_mode = WAL");
-    _db.pragma("busy_timeout = 5000");
-    if (!_initialized) {
-      _initialized = true;
+    if (process.env.JOBBOT_TEST_MODE === "1") {
+      console.log(`[db] OPEN ${dbPath}`);
+    }
+    const db = new Database(dbPath);
+    db.pragma("journal_mode = WAL");
+    db.pragma("busy_timeout = 5000");
+    g.__jobbot_db = db;
+    if (!g.__jobbot_db_initialized) {
+      g.__jobbot_db_initialized = true;
       initDb();
     }
   }
-  return _db;
+  return g.__jobbot_db;
 }
 
 export function closeConn(): void {
-  if (_db) {
-    _db.close();
-    _db = null;
-    _initialized = false;
+  if (g.__jobbot_db) {
+    g.__jobbot_db.close();
+    g.__jobbot_db = null;
+    g.__jobbot_db_initialized = false;
   }
 }
 
@@ -79,9 +93,36 @@ export function initDb(): void {
       model_key TEXT NOT NULL,
       call_date TEXT NOT NULL,
       call_count INTEGER DEFAULT 0,
+      tokens INTEGER DEFAULT 0,
       UNIQUE(provider, model_key, call_date)
     );
   `);
+
+  // Idempotent ALTERs for fit-scoring v2 columns added 2026-05-31
+  const newCols: Array<[string, string]> = [
+    ["fit_score", "INTEGER"],
+    ["keyword_score", "INTEGER"],
+    ["hardreq_score", "INTEGER"],
+    ["parseability_score", "INTEGER"],
+    ["requirements_json", "TEXT"],
+  ];
+  const existing = db
+    .prepare("PRAGMA table_info(applications)")
+    .all() as Array<{ name: string }>;
+  const have = new Set(existing.map((c) => c.name));
+  for (const [name, type] of newCols) {
+    if (!have.has(name)) {
+      db.exec(`ALTER TABLE applications ADD COLUMN ${name} ${type}`);
+    }
+  }
+
+  // api_usage gained a token counter on 2026-06-01.
+  const usageCols = db
+    .prepare("PRAGMA table_info(api_usage)")
+    .all() as Array<{ name: string }>;
+  if (!usageCols.some((c) => c.name === "tokens")) {
+    db.exec("ALTER TABLE api_usage ADD COLUMN tokens INTEGER DEFAULT 0");
+  }
 }
 
 // ── Config ──────────────────────────────────────────────────────────────
@@ -103,7 +144,12 @@ export function getConfig(key: string): string | null {
 
 export function isSetupComplete(): boolean {
   const required = ["name", "email", "phone", "master_resume_path"];
-  return required.every((k) => getConfig(k) !== null);
+  const result = required.every((k) => getConfig(k) !== null);
+  if (process.env.JOBBOT_TEST_MODE === "1") {
+    const vals = required.map((k) => `${k}=${getConfig(k) ? "✓" : "∅"}`);
+    console.log(`[db] isSetupComplete=${result} (${vals.join(", ")})`);
+  }
+  return result;
 }
 
 // ── Campaigns ───────────────────────────────────────────────────────────
@@ -113,15 +159,13 @@ export function createCampaign(
     name: string;
     titles: string;
     locations: string;
-    preferredModel?: string;
   }
 ): number {
-  const preferredModel = params.preferredModel ?? "auto";
   const result = getConn()
     .prepare(
-      "INSERT INTO campaigns (name, titles, locations, status, preferred_model) VALUES (?,?,?,'running',?)"
+      "INSERT INTO campaigns (name, titles, locations, status) VALUES (?,?,?,'running')"
     )
-    .run(params.name, params.titles, params.locations, preferredModel);
+    .run(params.name, params.titles, params.locations);
   return Number(result.lastInsertRowid);
 }
 
@@ -207,6 +251,11 @@ export function updateApplication(
     keywords?: string;
     jdSummary?: string;
     modelUsed?: string;
+    fitScore?: number;
+    keywordScore?: number;
+    hardreqScore?: number;
+    parseabilityScore?: number;
+    requirementsJson?: string;
   } = {}
 ): void {
   getConn()
@@ -218,7 +267,12 @@ export function updateApplication(
         original_ats_score=COALESCE(?,original_ats_score),
         keywords=COALESCE(?,keywords),
         jd_summary=COALESCE(?,jd_summary),
-        model_used=COALESCE(?,model_used)
+        model_used=COALESCE(?,model_used),
+        fit_score=COALESCE(?,fit_score),
+        keyword_score=COALESCE(?,keyword_score),
+        hardreq_score=COALESCE(?,hardreq_score),
+        parseability_score=COALESCE(?,parseability_score),
+        requirements_json=COALESCE(?,requirements_json)
       WHERE id=?`
     )
     .run(
@@ -230,6 +284,11 @@ export function updateApplication(
       opts.keywords ?? null,
       opts.jdSummary ?? null,
       opts.modelUsed ?? null,
+      opts.fitScore ?? null,
+      opts.keywordScore ?? null,
+      opts.hardreqScore ?? null,
+      opts.parseabilityScore ?? null,
+      opts.requirementsJson ?? null,
       appId
     );
 }
@@ -318,24 +377,31 @@ export function getSeenUrls(): Set<string> {
 
 // ── API Usage ───────────────────────────────────────────────────────────
 
-export function incrementApiUsage(modelKey: string): void {
+export function incrementApiUsage(modelKey: string, tokens: number = 0): void {
   const today = new Date().toISOString().split("T")[0];
-  const provider = modelKey.includes("/")
-    ? modelKey.split("/")[0]
-    : modelKey;
+  const provider = modelKey.includes("/") ? modelKey.split("/")[0] : modelKey;
   getConn()
     .prepare(
-      "INSERT INTO api_usage (provider, model_key, call_date, call_count) VALUES (?,?,?,1) ON CONFLICT(provider, model_key, call_date) DO UPDATE SET call_count = call_count + 1"
+      "INSERT INTO api_usage (provider, model_key, call_date, call_count, tokens) VALUES (?,?,?,1,?) ON CONFLICT(provider, model_key, call_date) DO UPDATE SET call_count = call_count + 1, tokens = tokens + excluded.tokens"
     )
-    .run(provider, modelKey, today);
+    .run(provider, modelKey, today, tokens);
 }
 
-export function getApiUsageToday(): Record<string, number> {
+export interface ApiUsageToday {
+  counts: Record<string, number>;
+  tokensByModel: Record<string, number>;
+}
+
+export function getApiUsageToday(): ApiUsageToday {
   const today = new Date().toISOString().split("T")[0];
   const rows = getConn()
-    .prepare("SELECT model_key, call_count FROM api_usage WHERE call_date=?")
-    .all(today) as { model_key: string; call_count: number }[];
-  const result: Record<string, number> = {};
-  for (const r of rows) result[r.model_key] = r.call_count;
-  return result;
+    .prepare("SELECT model_key, call_count, tokens FROM api_usage WHERE call_date=?")
+    .all(today) as { model_key: string; call_count: number; tokens: number }[];
+  const counts: Record<string, number> = {};
+  const tokensByModel: Record<string, number> = {};
+  for (const r of rows) {
+    counts[r.model_key] = r.call_count;
+    tokensByModel[r.model_key] = r.tokens;
+  }
+  return { counts, tokensByModel };
 }
