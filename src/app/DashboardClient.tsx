@@ -6,8 +6,18 @@ import {
   resolveCampaignButtonLabel,
   resolveCampaignButtonClass,
 } from "@/lib/campaign-ui";
+import { gaugeLevel } from "@/lib/usage-ui";
 
 type FilterMode = "all" | "easy" | "manual" | "tailored" | "untailored";
+
+interface UsageState {
+  tokens: number;
+  dailyLimit: number;
+  pct: number;
+  warn: boolean;
+  rateLimited: boolean;
+  retryAt: number;
+}
 
 interface DashboardProps {
   stats: { applied: number; manual: number; status: string };
@@ -41,6 +51,48 @@ export default function DashboardClient({
   const [appsPageSize, setAppsPageSize] = useState(20);
   const [fitModalJob, setFitModalJob] = useState<Record<string, any> | null>(null);
   const lastPendingCount = useRef(pendingJobs.length);
+
+  const [usage, setUsage] = useState<UsageState | null>(null);
+  const [alertsEnabled, setAlertsEnabled] = useState(false);
+  const warnedRef = useRef(false);
+
+  const enableAlerts = useCallback(async () => {
+    if (typeof Notification === "undefined") return;
+    const perm = await Notification.requestPermission();
+    setAlertsEnabled(perm === "granted");
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const u: UsageState = await fetch("/api/usage").then((r) => r.json());
+        if (cancelled) return;
+        setUsage(u);
+        if (u.warn && !warnedRef.current) {
+          warnedRef.current = true;
+          if (
+            alertsEnabled &&
+            typeof Notification !== "undefined" &&
+            Notification.permission === "granted"
+          ) {
+            new Notification("JobBot", {
+              body: `${Math.round(u.pct * 100)}% of your daily ${u.dailyLimit.toLocaleString()} token limit used.`,
+            });
+          }
+        }
+        if (!u.warn) warnedRef.current = false;
+      } catch {
+        // retry next tick
+      }
+    };
+    tick();
+    const id = setInterval(tick, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [alertsEnabled]);
 
   // Poll status
   useEffect(() => {
@@ -251,6 +303,42 @@ export default function DashboardClient({
           </div>
         </div>
       </div>
+
+      {/* Daily API limit gauge */}
+      {usage && (
+        <div className={`limit-gauge ${gaugeLevel(usage.pct, usage.rateLimited)}`}>
+          <div className="limit-gauge-head">
+            <span>
+              Daily API usage ({usage.tokens.toLocaleString()} /{" "}
+              {usage.dailyLimit.toLocaleString()} tokens)
+            </span>
+            <span>{Math.round(usage.pct * 100)}%</span>
+          </div>
+          <div className="limit-gauge-track">
+            <div
+              className="limit-gauge-fill"
+              style={{ width: `${Math.min(usage.pct * 100, 100)}%` }}
+            />
+          </div>
+          {usage.rateLimited && usage.retryAt > Date.now() && (
+            <p className="limit-gauge-note">
+              ⚠ Rate-limited — runs auto-stopped. Resets ~
+              {new Date(usage.retryAt).toLocaleTimeString()}.
+            </p>
+          )}
+          {typeof window !== "undefined" &&
+            "Notification" in window &&
+            !alertsEnabled && (
+              <button
+                type="button"
+                className="limit-gauge-alerts"
+                onClick={enableAlerts}
+              >
+                Enable alerts
+              </button>
+            )}
+        </div>
+      )}
 
       {/* Campaign Controls */}
       <div className="campaign-card">

@@ -2659,3 +2659,50 @@ mark.kw-highlight {
   color: var(--clr-text-muted);
   line-height: 1.5;
 }
+
+/* Daily API limit gauge */
+.limit-gauge {
+  margin: 1rem 0;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  background: var(--clr-surface, #1b1b1f);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.limit-gauge-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+.limit-gauge-track {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.limit-gauge-fill {
+  height: 100%;
+  background: var(--clr-accent, #4f8cff);
+  transition: width 0.4s ease;
+}
+.limit-gauge.warn .limit-gauge-fill {
+  background: #f5a623;
+}
+.limit-gauge.blocked .limit-gauge-fill {
+  background: var(--clr-danger, #e5484d);
+}
+.limit-gauge-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--clr-danger, #e5484d);
+}
+.limit-gauge-alerts {
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: inherit;
+  border-radius: 6px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+}
