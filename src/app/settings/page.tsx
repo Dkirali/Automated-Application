@@ -29,6 +29,7 @@ export default function SettingsPage() {
       configuredKeys={maskedKeys}
       currentResume={resumePath ? resumePath.split("/").pop() || null : null}
       linkedinConnected={isLinkedinConnected()}
+      dailyTokenLimit={getConfig("daily_token_limit") || ""}
     />
   );
 }

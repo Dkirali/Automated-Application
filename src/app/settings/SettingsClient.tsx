@@ -21,6 +21,7 @@ interface SettingsClientProps {
   configuredKeys: Record<ActiveProvider, string | null>;
   currentResume: string | null;
   linkedinConnected: boolean;
+  dailyTokenLimit: string;
 }
 
 export default function SettingsClient({
@@ -31,6 +32,7 @@ export default function SettingsClient({
   configuredKeys,
   currentResume,
   linkedinConnected: initialLinkedin,
+  dailyTokenLimit,
 }: SettingsClientProps) {
   const [linkedinConnected, setLinkedinConnected] = useState(initialLinkedin);
   const [linkedinBusy, setLinkedinBusy] = useState<"connecting" | "disconnecting" | null>(null);
@@ -254,6 +256,21 @@ export default function SettingsClient({
                 <strong>{provider.name}</strong>. Switch the provider or check the key.
               </p>
             )}
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="daily-token-limit">Daily token limit</label>
+            <input
+              type="number"
+              id="daily-token-limit"
+              name="daily_token_limit"
+              min={1}
+              defaultValue={dailyTokenLimit || "100000"}
+            />
+            <p className="form-hint">
+              Groq&apos;s free tier is ~100,000 tokens/day. The dashboard gauge and
+              auto-stop use this number.
+            </p>
           </div>
 
           <div className="form-group">

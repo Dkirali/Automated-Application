@@ -36,6 +36,12 @@ export async function POST(request: NextRequest) {
   setConfig("email", email);
   setConfig("phone", phone);
 
+  const dailyTokenLimitRaw = (formData.get("daily_token_limit") as string)?.trim() || "";
+  if (dailyTokenLimitRaw) {
+    const n = parseInt(dailyTokenLimitRaw, 10);
+    if (Number.isFinite(n) && n > 0) setConfig("daily_token_limit", String(n));
+  }
+
   // Update API keys in .env
   if (apiKey || groqKey || openrouterKey) {
     let envContent = "";
