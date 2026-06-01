@@ -31,5 +31,8 @@ tests/e2e/fixtures/fixture-resume.txt
 tests/e2e/fixtures/sample.docx
 playwright-report/
 
+# Local tooling / editor config
+.claude/
+
 # OS
 .DS_Store
