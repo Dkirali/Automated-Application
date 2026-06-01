@@ -36,7 +36,7 @@ async function saveEasyApplySnapshot(page: Page, url: string): Promise<string | 
 }
 
 export function getProfilePath(): string {
-  return JOBBOT_PROFILE;
+  return process.env.JOBBOT_PROFILE_DIR || JOBBOT_PROFILE;
 }
 
 export async function getBrowserContext(): Promise<BrowserContext> {
