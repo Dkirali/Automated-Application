@@ -724,9 +724,14 @@ export function getRateLimitState(): { rateLimited: boolean; retryAt: number; me
   };
 }
 
+// Groq's free-tier daily token cap; used when the user hasn't set one.
+export const DEFAULT_DAILY_TOKEN_LIMIT = 100_000;
+
 // A daily-quota exhaustion looks like a long retry-after (resets at UTC
 // midnight) or usage already at/over the cap. A short minute-window blip is
 // neither — we leave those to the existing pause/auto-resume behavior.
+// Groq's per-minute windows clear in under ~2 min; a daily-quota reset is
+// hours away, so a retry-after >= 5 min signals daily (not minute) exhaustion.
 export const DAILY_STOP_THRESHOLD_MS = 5 * 60_000;
 
 export function isDailyExhaustion(
@@ -745,11 +750,11 @@ function maybeStopForDailyExhaustion(retryAtMs: number): void {
       require("./db");
     const model = getActiveModel();
     let usedTokens = 0;
-    let dailyLimit = 100_000;
+    let dailyLimit = DEFAULT_DAILY_TOKEN_LIMIT;
     if (model) {
       const usage = getApiUsageToday();
       usedTokens = usage.tokensByModel?.[model.usageKey] ?? 0;
-      dailyLimit = Number(getConfig("daily_token_limit")) || 100_000;
+      dailyLimit = Number(getConfig("daily_token_limit")) || DEFAULT_DAILY_TOKEN_LIMIT;
     }
     if (!isDailyExhaustion(retryAtMs, usedTokens, dailyLimit)) return;
 
