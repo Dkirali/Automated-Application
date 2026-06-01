@@ -7,7 +7,7 @@ import {
   updateCampaignStatus,
   getActiveCampaign,
 } from "./db";
-import { generateFitSummary } from "./resume";
+import { analyzeFitScores, generateFitRationale } from "./resume";
 import type { SearchFilters, ScrapedJob } from "./scraper";
 
 // Module-level state — mirrors the Python app's globals
@@ -75,17 +75,34 @@ export async function runCampaign(
       const applyTag = job.easy_apply ? "easy" : "manual";
       update(`[${jobsFound} found] ${job.title} at ${job.company} (${applyTag}) — awaiting tailor`);
 
-      // Run fit analysis in background
+      // Two-stage fit analysis — scores land in the DB ASAP so the
+      // dashboard shows them before the slower rationale text arrives.
       if (masterPath && job.job_description) {
-        generateFitSummary(job.job_description, masterPath)
-          .then((fit) => {
+        const jd = job.job_description;
+        analyzeFitScores(jd, masterPath)
+          .then((scores) => {
             updateApplication(appId, "pending", {
-              fitSummary: fit.raw,
-              jdSummary: fit.jdSummary,
+              fitScore: scores.fitScore,
+              keywordScore: scores.keywordScore,
+              hardreqScore: scores.hardreqScore,
+              parseabilityScore: scores.parseabilityScore,
+              requirementsJson: JSON.stringify(scores.requirements),
             });
+            // Stage B in a separate microtask so a rationale failure
+            // can't undo the score write.
+            generateFitRationale(jd, masterPath)
+              .then((rationale) => {
+                updateApplication(appId, "pending", {
+                  fitSummary: rationale.raw,
+                  jdSummary: rationale.jdSummary,
+                });
+              })
+              .catch(() => {
+                // non-fatal — score is already saved
+              });
           })
           .catch(() => {
-            // non-fatal
+            // non-fatal — job stays unscored, user can retry
           });
       }
     };

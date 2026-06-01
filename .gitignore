@@ -22,6 +22,14 @@ coverage/
 tests/e2e/test.db
 tests/e2e/test.db-shm
 tests/e2e/test.db-wal
+tests/e2e/.test.db
+tests/e2e/.test.db-shm
+tests/e2e/.test.db-wal
+tests/e2e/.test.env
+tests/e2e/.test-resumes/
+tests/e2e/fixtures/fixture-resume.txt
+tests/e2e/fixtures/sample.docx
+playwright-report/
 
 # OS
 .DS_Store

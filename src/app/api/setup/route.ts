@@ -3,7 +3,14 @@ import { setConfig } from "@/lib/db";
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "fs";
 import { resolve, extname } from "path";
 
-const RESUMES_DIR = resolve(process.cwd(), "resumes");
+// Paths are overridable so e2e tests can redirect writes into a sandbox
+// instead of clobbering the developer's real .env and master resume.
+const RESUMES_DIR = process.env.JOBBOT_RESUMES_DIR
+  ? resolve(process.env.JOBBOT_RESUMES_DIR)
+  : resolve(process.cwd(), "resumes");
+const ENV_PATH = process.env.JOBBOT_ENV_PATH
+  ? resolve(process.env.JOBBOT_ENV_PATH)
+  : resolve(process.cwd(), ".env");
 const ALLOWED_EXTENSIONS = new Set([".docx", ".doc", ".pdf"]);
 
 export async function POST(request: NextRequest) {
@@ -37,11 +44,17 @@ export async function POST(request: NextRequest) {
   setConfig("phone", phone);
   setConfig("master_resume_path", destPath);
 
-  // Write API keys to .env
-  const envPath = resolve(process.cwd(), ".env");
+  // Record which provider this setup chose — the runtime uses exactly one.
+  let activeProvider: "anthropic" | "groq" | "openrouter" | null = null;
+  if (groqKey) activeProvider = "groq";
+  else if (apiKey) activeProvider = "anthropic";
+  else if (openrouterKey) activeProvider = "openrouter";
+  if (activeProvider) setConfig("active_provider", activeProvider);
+
+  // Write API key to .env (only one is submitted by the setup form)
   let envContent = "";
-  if (existsSync(envPath)) {
-    envContent = readFileSync(envPath, "utf-8");
+  if (existsSync(ENV_PATH)) {
+    envContent = readFileSync(ENV_PATH, "utf-8");
   }
   const envMap = new Map<string, string>();
   for (const line of envContent.split("\n")) {
@@ -51,7 +64,7 @@ export async function POST(request: NextRequest) {
   if (apiKey) { envMap.set("ANTHROPIC_API_KEY", apiKey); process.env.ANTHROPIC_API_KEY = apiKey; }
   if (groqKey) { envMap.set("GROQ_API_KEY", groqKey); process.env.GROQ_API_KEY = groqKey; }
   if (openrouterKey) { envMap.set("OPENROUTER_API_KEY", openrouterKey); process.env.OPENROUTER_API_KEY = openrouterKey; }
-  writeFileSync(envPath, Array.from(envMap.entries()).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
+  writeFileSync(ENV_PATH, Array.from(envMap.entries()).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
 
-  return NextResponse.redirect(new URL("/", request.url), 303);
+  return NextResponse.redirect(new URL("/setup/linkedin", request.url), 303);
 }

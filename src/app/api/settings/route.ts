@@ -3,8 +3,19 @@ import { setConfig } from "@/lib/db";
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "fs";
 import { resolve, extname } from "path";
 
-const RESUMES_DIR = resolve(process.cwd(), "resumes");
+const RESUMES_DIR = process.env.JOBBOT_RESUMES_DIR
+  ? resolve(process.env.JOBBOT_RESUMES_DIR)
+  : resolve(process.cwd(), "resumes");
+const ENV_PATH = process.env.JOBBOT_ENV_PATH
+  ? resolve(process.env.JOBBOT_ENV_PATH)
+  : resolve(process.cwd(), ".env");
 const ALLOWED_EXTENSIONS = new Set([".docx", ".doc", ".pdf"]);
+
+const PROVIDER_ENV: Record<"groq" | "anthropic" | "openrouter", string> = {
+  groq: "GROQ_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+};
 
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
@@ -14,6 +25,7 @@ export async function POST(request: NextRequest) {
   const apiKey = (formData.get("api_key") as string)?.trim() || "";
   const groqKey = (formData.get("groq_key") as string)?.trim() || "";
   const openrouterKey = (formData.get("openrouter_key") as string)?.trim() || "";
+  const activeProviderRaw = (formData.get("active_provider") as string)?.trim() || "";
   const resumeFile = formData.get("resume") as File | null;
 
   if (!name || !email || !phone) {
@@ -26,10 +38,9 @@ export async function POST(request: NextRequest) {
 
   // Update API keys in .env
   if (apiKey || groqKey || openrouterKey) {
-    const envPath = resolve(process.cwd(), ".env");
     let envContent = "";
-    if (existsSync(envPath)) {
-      envContent = readFileSync(envPath, "utf-8");
+    if (existsSync(ENV_PATH)) {
+      envContent = readFileSync(ENV_PATH, "utf-8");
     }
     const lines = envContent.split("\n");
     const envMap = new Map<string, string>();
@@ -40,7 +51,25 @@ export async function POST(request: NextRequest) {
     if (apiKey) { envMap.set("ANTHROPIC_API_KEY", apiKey); process.env.ANTHROPIC_API_KEY = apiKey; }
     if (groqKey) { envMap.set("GROQ_API_KEY", groqKey); process.env.GROQ_API_KEY = groqKey; }
     if (openrouterKey) { envMap.set("OPENROUTER_API_KEY", openrouterKey); process.env.OPENROUTER_API_KEY = openrouterKey; }
-    writeFileSync(envPath, Array.from(envMap.entries()).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
+    writeFileSync(ENV_PATH, Array.from(envMap.entries()).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
+  }
+
+  // Update active provider — only commit if a key for that provider exists
+  // (either newly submitted or already in env), so we never point the app at
+  // a provider with no credentials.
+  if (activeProviderRaw === "groq" || activeProviderRaw === "anthropic" || activeProviderRaw === "openrouter") {
+    const envVar = PROVIDER_ENV[activeProviderRaw];
+    if (process.env[envVar]) {
+      setConfig("active_provider", activeProviderRaw);
+    } else {
+      return NextResponse.redirect(
+        new URL(
+          `/settings?error=Cannot+switch+to+${activeProviderRaw}+without+a+key`,
+          request.url
+        ),
+        303
+      );
+    }
   }
 
   // Handle resume upload

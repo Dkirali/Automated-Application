@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getApplication } from "@/lib/db";
+import { getApplication, getConfig } from "@/lib/db";
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
 
@@ -29,7 +29,8 @@ export async function GET(
   const titleSlug = (app.title || "Resume").replace(/ /g, "_");
   const serveExt = servePath.split(".").pop() || "docx";
   const downloadExt = serveExt === "txt" ? ".txt" : serveExt === "pdf" ? ".pdf" : ".docx";
-  const downloadName = `Doruk_Kirali_${titleSlug}${downloadExt}`;
+  const nameSlug = (getConfig("name") || "Resume").trim().replace(/\s+/g, "_");
+  const downloadName = `${nameSlug}_${titleSlug}${downloadExt}`;
   const contentTypes: Record<string, string> = {
     pdf: "application/pdf",
     docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

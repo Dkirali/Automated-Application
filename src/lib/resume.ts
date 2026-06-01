@@ -1,5 +1,14 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { getConfig } from "./db";
+import {
+  blendFitScore,
+  calculateHardReqScore,
+  calculateKeywordCoverage,
+  calculateParseability,
+  type HardRequirement,
+  type JobRequirements,
+} from "./fit-scoring";
 
 // ── Constants ───────────────────────────────────────────────────────────
 
@@ -12,11 +21,6 @@ const REQUIRED_SECTIONS = [
   "SKILLS",
   "CERTIFICATES",
   "LANGUAGES",
-];
-
-const MANDATORY_CERTIFICATES = [
-  "Udemy — AI Coder: Vibe Coder to Agentic Engineer in 3 Weeks",
-  "Udemy — AI Engineer Agentic Track: The Complete Agent & MCP Course",
 ];
 
 export interface CandidateHeader {
@@ -65,14 +69,93 @@ function buildContactSkipPatterns(header: CandidateHeader): string[] {
   return parts;
 }
 
-export const AVAILABLE_MODELS: Record<string, string> = {
-  auto: "Auto (best available)",
-  "groq/llama-3.3-70b": "Groq — Llama 3.3 70B",
-  "openrouter/gpt-oss-120b": "OpenRouter — GPT-OSS 120B",
-  "openrouter/minimax-m2.5": "OpenRouter — MiniMax M2.5",
-  "openrouter/free": "OpenRouter — Best Free",
-  "anthropic/claude-sonnet": "Anthropic — Claude Sonnet",
+// ── Active model (configured at onboarding) ────────────────────────────
+
+export type ActiveProvider = "groq" | "anthropic" | "openrouter";
+
+export interface ActiveModel {
+  provider: ActiveProvider;
+  modelId: string;
+  displayName: string;
+  envKey: string;
+  usageKey: string;
+}
+
+export const PROVIDER_MODELS: Record<ActiveProvider, ActiveModel> = {
+  groq: {
+    provider: "groq",
+    modelId: "llama-3.3-70b-versatile",
+    displayName: "Groq / Llama 3.3 70B",
+    envKey: "GROQ_API_KEY",
+    usageKey: "groq/llama-3.3-70b",
+  },
+  anthropic: {
+    provider: "anthropic",
+    modelId: "claude-sonnet-4-6",
+    displayName: "Anthropic / Claude Sonnet",
+    envKey: "ANTHROPIC_API_KEY",
+    usageKey: "anthropic/claude-sonnet",
+  },
+  openrouter: {
+    provider: "openrouter",
+    modelId: "openai/gpt-oss-120b:free",
+    displayName: "OpenRouter / GPT-OSS 120B",
+    envKey: "OPENROUTER_API_KEY",
+    usageKey: "openrouter/gpt-oss-120b",
+  },
 };
+
+export function getActiveProvider(): ActiveProvider | null {
+  const raw = getConfig("active_provider");
+  if (raw === "groq" || raw === "anthropic" || raw === "openrouter") return raw;
+  return null;
+}
+
+export function getActiveModel(): ActiveModel | null {
+  const provider = getActiveProvider();
+  return provider ? PROVIDER_MODELS[provider] : null;
+}
+
+const EXTRACTOR_PROMPT = `You are an ATS analyst. Read the job posting and the candidate's resume, then output a strict JSON object — no preamble, no markdown, no commentary.
+
+Job Posting:
+{job_description}
+
+Candidate Resume:
+{resume_text}
+
+Output schema (return EXACTLY this shape):
+{
+  "required_keywords": [string, ...],   // skills/tools/methodologies the JD explicitly requires ("must have", "required", "5+ years of", "Requirements:")
+  "preferred_keywords": [string, ...],  // nice-to-haves ("preferred", "bonus", "a plus", "nice to have")
+  "hard_requirements": [
+    {
+      "text": string,        // the requirement as written or paraphrased (e.g. "5+ years of backend engineering", "Bachelor's degree in CS or related")
+      "met": boolean,        // whether the candidate's resume satisfies it
+      "evidence": string     // short quote/paraphrase from the resume that supports met=true, or empty string when met=false
+    }, ...
+  ]
+}
+
+Rules:
+- 5-12 keywords total per list. Pull from the JD verbatim where possible — they are matched against the resume by ATS-style substring.
+- Hard requirements are concrete, checkable constraints (years of experience, degrees, certifications, language fluency, legal work authorization, location). Soft preferences go in preferred_keywords instead.
+- Set met=true ONLY when the resume provides clear evidence. When in doubt set met=false.
+- Output ONLY the JSON object. No \`\`\` fences, no surrounding text.`;
+
+const RATIONALE_PROMPT = `You are a senior recruiter writing a short opinion on a candidate's fit for a role. The numeric scoring is already done elsewhere — your job is the human-readable take.
+
+Job Posting:
+{job_description}
+
+Candidate Resume:
+{resume_text}
+
+Respond in this exact format (no extra text, no markdown):
+JD_SUMMARY: <2-3 sentence summary of the role, seniority level, and key focus areas>
+STRENGTHS: <comma-separated list of 2-4 matching skills or experiences>
+GAPS: <comma-separated list of 1-3 missing or weak areas, or "None">
+VERDICT: <one sentence — would you recommend applying? why?>`;
 
 const FIT_PROMPT = `You are a senior recruiter evaluating a candidate's fit for a role.
 
@@ -147,13 +230,10 @@ Per-entry format inside EDUCATION:
 School Name | Location | Start – End
 Degree / Program
 
-CERTIFICATES section MUST include these two lines verbatim (plus any others already in the resume):
-Udemy — AI Coder: Vibe Coder to Agentic Engineer in 3 Weeks
-Udemy — AI Engineer Agentic Track: The Complete Agent & MCP Course
+CERTIFICATES section MUST list every certificate present in the candidate's master resume verbatim (one per line). Do NOT add certificates the candidate does not hold.
 
-LANGUAGES section MUST list every language from GROUND TRUTH, one per line, e.g.:
-Turkish – Native
-English – Native
+LANGUAGES section MUST list every language from GROUND TRUTH, one per line, in the form:
+<Language Name> – <Proficiency Level>
 
 Respond in this exact format (no Markdown, no HTML, no extra commentary):
 KEYWORDS: keyword1, keyword2, keyword3, ...
@@ -162,25 +242,15 @@ RESUME:
 
 // ── Rate limiting ───────────────────────────────────────────────────────
 
-const LLM_MIN_INTERVAL = 4000; // ms between LLM calls
+// Groq free tier is 30 req/min = 1 every 2 s. 2000 ms keeps us under the
+// limit while doubling throughput vs. the previous 4 s.
+const LLM_MIN_INTERVAL = 2000;
 let llmLastCall = 0;
 
-// ── Last model tracking ────────────────────────────────────────────────
-
-let lastModelUsed = "—";
-
-export function getLastModelUsed(): string {
-  return lastModelUsed;
-}
-
-function setLastModel(name: string): void {
-  lastModelUsed = name;
-}
-
-function trackUsage(modelKey: string): void {
+function trackUsage(usageKey: string): void {
   try {
     const { incrementApiUsage } = require("./db");
-    incrementApiUsage(modelKey);
+    incrementApiUsage(usageKey);
   } catch {
     // non-critical
   }
@@ -590,13 +660,6 @@ export function validateTailoredResume(
     }
   }
 
-  // 7. Mandatory Udemy certificates present
-  for (const cert of MANDATORY_CERTIFICATES) {
-    if (!output.includes(cert)) {
-      errors.push(`Missing mandatory certificate: ${cert}`);
-    }
-  }
-
   if (errors.length) return { ok: false, errors };
   return { ok: true };
 }
@@ -633,6 +696,67 @@ export async function readResumeTextAsync(filePath: string): Promise<string> {
 
 // ── LLM Provider Calls ─────────────────────────────────────────────────
 
+// A throwable error class that callers (retry-fit, campaign worker) can
+// recognize to back off properly instead of treating rate limits like
+// generic provider failures.
+export class RateLimitError extends Error {
+  retryAt: number; // unix ms
+  rawMessage: string;
+  constructor(retryAtMs: number, rawMessage: string) {
+    super(`Rate-limited until ${new Date(retryAtMs).toISOString()}: ${rawMessage}`);
+    this.name = "RateLimitError";
+    this.retryAt = retryAtMs;
+    this.rawMessage = rawMessage;
+  }
+}
+
+// Module-level rate-limit state. Stashed on globalThis so HMR doesn't fork it.
+interface LlmGlobals { __jobbot_rate_limit_until: number; __jobbot_rate_limit_msg: string }
+const llmG = globalThis as unknown as LlmGlobals;
+if (llmG.__jobbot_rate_limit_until === undefined) llmG.__jobbot_rate_limit_until = 0;
+if (llmG.__jobbot_rate_limit_msg === undefined) llmG.__jobbot_rate_limit_msg = "";
+
+export function getRateLimitState(): { rateLimited: boolean; retryAt: number; message: string } {
+  return {
+    rateLimited: Date.now() < llmG.__jobbot_rate_limit_until,
+    retryAt: llmG.__jobbot_rate_limit_until,
+    message: llmG.__jobbot_rate_limit_msg,
+  };
+}
+
+function setRateLimited(retryAtMs: number, message: string): void {
+  // Take the later of the two — never reduce the back-off window.
+  if (retryAtMs > llmG.__jobbot_rate_limit_until) {
+    llmG.__jobbot_rate_limit_until = retryAtMs;
+    llmG.__jobbot_rate_limit_msg = message;
+  }
+}
+
+// Clear the cached back-off — used when the user explicitly wants to retry
+// despite the server still being in its back-off window (Groq's published
+// retry-after often over-estimates, so a manual force-retry is useful).
+export function clearRateLimit(): void {
+  llmG.__jobbot_rate_limit_until = 0;
+  llmG.__jobbot_rate_limit_msg = "";
+}
+
+// Groq's 429 body looks like:
+//   "Please try again in 37m22.944s"  (sometimes 12.5s, sometimes 2.7s)
+// Parse to milliseconds.
+function parseRetryAfterMs(message: string): number | null {
+  const m = message.match(/try again in\s+(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?/i);
+  if (!m) return null;
+  const mins = m[1] ? parseInt(m[1], 10) : 0;
+  const secs = m[2] ? parseFloat(m[2]) : 0;
+  const total = (mins * 60 + secs) * 1000;
+  return total > 0 ? total : null;
+}
+
+// Short rate-limit windows (a few seconds) — sleep and retry inline.
+// Anything longer than this gets bubbled up as a RateLimitError so the
+// caller can give up cleanly and the dashboard can back off polling.
+const RATE_LIMIT_INLINE_THRESHOLD_MS = 30_000;
+
 async function callProvider(
   name: string,
   fn: () => Promise<string>
@@ -643,13 +767,27 @@ async function callProvider(
       return await fn();
     } catch (e: unknown) {
       console.error(`[LLM] ${name} attempt ${attempt + 1} failed:`, e);
-      const errStr = String(e).toLowerCase();
+      const errStr = String(e);
+      const errLow = errStr.toLowerCase();
       const isRateLimit =
-        errStr.includes("429") ||
-        errStr.includes("rate") ||
-        errStr.includes("quota") ||
-        errStr.includes("resource_exhausted");
-      if (isRateLimit) return null;
+        errLow.includes("429") ||
+        errLow.includes("rate_limit") ||
+        errLow.includes("rate limit") ||
+        errLow.includes("quota") ||
+        errLow.includes("resource_exhausted");
+
+      if (isRateLimit) {
+        const waitMs = parseRetryAfterMs(errStr);
+        if (waitMs !== null && waitMs <= RATE_LIMIT_INLINE_THRESHOLD_MS) {
+          console.error(`[LLM] ${name} rate-limited — sleeping ${waitMs} ms`);
+          await new Promise((r) => setTimeout(r, waitMs + 500));
+          continue; // retry within the loop
+        }
+        // Long wait OR couldn't parse — register and bail out fast.
+        const retryAt = Date.now() + (waitMs ?? 60_000);
+        setRateLimited(retryAt, errStr.slice(0, 200));
+        throw new RateLimitError(retryAt, errStr.slice(0, 200));
+      }
       if (attempt === maxRetries - 1) return null;
       await new Promise((r) => setTimeout(r, 2000 * Math.pow(2, attempt)));
     }
@@ -660,9 +798,15 @@ async function callProvider(
 async function callLlm(
   prompt: string,
   maxTokens: number = 2048,
-  preferredModel: string = "auto",
   validate?: (text: string) => { ok: true } | { ok: false; errors: string[] }
 ): Promise<string> {
+  // Already-known rate limit — skip the call so we don't burn time and
+  // pile up identical 429s. Surfaces as a RateLimitError so callers can
+  // distinguish "give me a few minutes" from "real provider failure".
+  const rl = getRateLimitState();
+  if (rl.rateLimited) {
+    throw new RateLimitError(rl.retryAt, rl.message);
+  }
   // Enforce minimum interval
   const now = Date.now();
   const elapsed = now - llmLastCall;
@@ -671,14 +815,20 @@ async function callLlm(
   }
   llmLastCall = Date.now();
 
-  const groqKey = process.env.GROQ_API_KEY;
-  const openrouterKey = process.env.OPENROUTER_API_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const model = getActiveModel();
+  if (!model) {
+    throw new Error(
+      "No active provider configured. Complete onboarding to pick a provider."
+    );
+  }
 
-  const errors: string[] = [];
+  const apiKey = process.env[model.envKey];
+  if (!apiKey) {
+    throw new Error(
+      `Active provider is ${model.provider} but ${model.envKey} is not set.`
+    );
+  }
 
-  // Wrap a raw provider call with validation. On validation failure, throw
-  // so the outer callProvider retry/fallthrough treats it as a recoverable error.
   const withValidation = (fn: () => Promise<string>): (() => Promise<string>) => {
     if (!validate) return fn;
     return async () => {
@@ -695,140 +845,70 @@ async function callLlm(
     };
   };
 
-  // Provider helpers — all use temperature 0 + top_p 0.1 for determinism
-  const groq = async (): Promise<string> => {
-    const Groq = require("groq-sdk");
-    const client = new Groq({ apiKey: groqKey });
-    const message = await client.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      max_tokens: maxTokens,
-      temperature: 0,
-      top_p: 0.1,
-      messages: [{ role: "user", content: prompt }],
-    });
-    return message.choices[0].message.content;
-  };
-
-  const orCall = async (modelId: string): Promise<string> => {
-    const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${openrouterKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost:3000",
-        "X-Title": "JobBot",
-      },
-      body: JSON.stringify({
-        model: modelId,
+  const callers: Record<ActiveProvider, () => Promise<string>> = {
+    groq: async () => {
+      const Groq = require("groq-sdk");
+      const client = new Groq({ apiKey });
+      const message = await client.chat.completions.create({
+        model: model.modelId,
         max_tokens: maxTokens,
         temperature: 0,
         top_p: 0.1,
         messages: [{ role: "user", content: prompt }],
-      }),
-    });
-    if (!resp.ok) throw new Error(`OpenRouter ${resp.status}: ${resp.statusText}`);
-    const data = await resp.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error(`Empty response from ${modelId}`);
-    return content;
+      });
+      return message.choices[0].message.content;
+    },
+    anthropic: async () => {
+      const Anthropic =
+        require("@anthropic-ai/sdk").default || require("@anthropic-ai/sdk");
+      const client = new Anthropic({ apiKey });
+      const message = await client.messages.create({
+        model: model.modelId,
+        max_tokens: maxTokens,
+        temperature: 0,
+        top_p: 0.1,
+        messages: [{ role: "user", content: prompt }],
+      });
+      return message.content[0].text;
+    },
+    openrouter: async () => {
+      const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000",
+          "X-Title": "JobBot",
+        },
+        body: JSON.stringify({
+          model: model.modelId,
+          max_tokens: maxTokens,
+          temperature: 0,
+          top_p: 0.1,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      if (!resp.ok) {
+        throw new Error(`OpenRouter ${resp.status}: ${resp.statusText}`);
+      }
+      const data = await resp.json();
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) throw new Error(`Empty response from ${model.modelId}`);
+      return content;
+    },
   };
 
-  const anthropic = async (): Promise<string> => {
-    const Anthropic = require("@anthropic-ai/sdk").default || require("@anthropic-ai/sdk");
-    const client = new Anthropic({ apiKey: anthropicKey });
-    const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: maxTokens,
-      temperature: 0,
-      top_p: 0.1,
-      messages: [{ role: "user", content: prompt }],
-    });
-    return message.content[0].text;
-  };
+  const result = await callProvider(
+    model.displayName,
+    withValidation(callers[model.provider])
+  );
 
-  // Specific model requested
-  if (preferredModel && preferredModel !== "auto") {
-    const MODEL_MAP: Record<
-      string,
-      { label: string; fn: () => Promise<string>; key: string | undefined }
-    > = {
-      "groq/llama-3.3-70b": { label: "Groq/Llama-3.3-70B", fn: withValidation(groq), key: groqKey },
-      "openrouter/gpt-oss-120b": {
-        label: "OpenRouter/gpt-oss-120b:free",
-        fn: withValidation(() => orCall("openai/gpt-oss-120b:free")),
-        key: openrouterKey,
-      },
-      "openrouter/minimax-m2.5": {
-        label: "OpenRouter/minimax-m2.5:free",
-        fn: withValidation(() => orCall("minimax/minimax-m2.5:free")),
-        key: openrouterKey,
-      },
-      "openrouter/free": {
-        label: "OpenRouter/free",
-        fn: withValidation(() => orCall("openrouter/free")),
-        key: openrouterKey,
-      },
-      "anthropic/claude-sonnet": {
-        label: "Anthropic/Claude-Sonnet",
-        fn: withValidation(anthropic),
-        key: anthropicKey,
-      },
-    };
-
-    const entry = MODEL_MAP[preferredModel];
-    if (entry?.key) {
-      const result = await callProvider(entry.label, entry.fn);
-      if (result !== null) {
-        setLastModel(entry.label);
-        trackUsage(preferredModel);
-        return result;
-      }
-    }
-    throw new Error(`Model ${preferredModel} failed — no API key or provider error`);
+  if (result === null) {
+    throw new Error(`${model.displayName} failed after retries.`);
   }
 
-  // Auto cascade: Groq → OpenRouter → Anthropic
-  if (groqKey) {
-    const result = await callProvider("Groq/Llama-3.3-70B", withValidation(groq));
-    if (result !== null) {
-      setLastModel("Groq/Llama-3.3-70B");
-      trackUsage("groq/llama-3.3-70b");
-      return result;
-    }
-    errors.push("Groq");
-  }
-
-  if (openrouterKey) {
-    const orModels = [
-      { id: "openai/gpt-oss-120b:free", label: "OpenRouter/gpt-oss-120b:free", key: "openrouter/gpt-oss-120b" },
-      { id: "minimax/minimax-m2.5:free", label: "OpenRouter/minimax-m2.5:free", key: "openrouter/minimax-m2.5" },
-      { id: "openrouter/free", label: "OpenRouter/free", key: "openrouter/free" },
-    ];
-    for (const m of orModels) {
-      const result = await callProvider(m.label, withValidation(() => orCall(m.id)));
-      if (result !== null) {
-        setLastModel(m.label);
-        trackUsage(m.key);
-        return result;
-      }
-      errors.push(m.label);
-    }
-  }
-
-  if (anthropicKey) {
-    const result = await callProvider("Anthropic/Claude-Sonnet", withValidation(anthropic));
-    if (result !== null) {
-      setLastModel("Anthropic/Claude-Sonnet");
-      trackUsage("anthropic/claude-sonnet");
-      return result;
-    }
-    errors.push("Anthropic");
-  }
-
-  if (errors.length) {
-    throw new Error(`All LLM providers failed: ${errors.join(", ")}`);
-  }
-  throw new Error("No API key set — add a Groq, OpenRouter, or Anthropic key in Settings");
+  trackUsage(model.usageKey);
+  return result;
 }
 
 // ── DOCX generation ───────────────────────────────────────────────────
@@ -1047,8 +1127,7 @@ export async function tailorResume(
   jobId: number,
   jobDescription: string,
   masterResumePath: string,
-  existingKeywords?: string[],
-  preferredModel: string = "auto"
+  existingKeywords?: string[]
 ): Promise<{
   keywords: string[];
   keywordsStr: string;
@@ -1069,7 +1148,7 @@ export async function tailorResume(
     .replace("{resume_text}", resumeText)
     .replace("{ground_truth}", groundTruth);
 
-  const responseText = await callLlm(prompt, 3000, preferredModel, (text) => {
+  const responseText = await callLlm(prompt, 3000, (text) => {
     const extracted = extractResumeFromResponse(text) || text;
     return validateTailoredResume(normalizeDashes(extracted), facts);
   });
@@ -1104,35 +1183,139 @@ export async function tailorResume(
     tailoredText,
     docxPath,
     pdfPath: null,
-    modelUsed: getLastModelUsed(),
+    modelUsed: getActiveModel()?.displayName ?? "unknown",
   };
 }
 
-export async function generateFitSummary(
+function extractJsonObject(text: string): unknown | null {
+  const cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) return null;
+  try {
+    return JSON.parse(cleaned.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((v): v is string => typeof v === "string")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function toHardRequirements(value: unknown): HardRequirement[] {
+  if (!Array.isArray(value)) return [];
+  const out: HardRequirement[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.text !== "string") continue;
+    out.push({
+      text: r.text.trim(),
+      met: r.met === true,
+      evidence: typeof r.evidence === "string" ? r.evidence.trim() : "",
+    });
+  }
+  return out;
+}
+
+export async function extractJobRequirements(
   jobDescription: string,
-  masterResumePath: string
-): Promise<{
+  resumeText: string
+): Promise<JobRequirements> {
+  const prompt = EXTRACTOR_PROMPT
+    .replace("{job_description}", jobDescription.slice(0, 4000))
+    .replace("{resume_text}", resumeText.slice(0, 3000));
+  const raw = await callLlm(prompt, 1200);
+  const parsed = extractJsonObject(raw) as Record<string, unknown> | null;
+  if (!parsed) {
+    return { required_keywords: [], preferred_keywords: [], hard_requirements: [] };
+  }
+  return {
+    required_keywords: toStringArray(parsed.required_keywords),
+    preferred_keywords: toStringArray(parsed.preferred_keywords),
+    hard_requirements: toHardRequirements(parsed.hard_requirements),
+  };
+}
+
+export interface FitScores {
   fitScore: number;
+  keywordScore: number;
+  hardreqScore: number;
+  parseabilityScore: number;
+  requirements: JobRequirements;
+  matchedRequiredKeywords: string[];
+  missedRequiredKeywords: string[];
+  matchedPreferredKeywords: string[];
+  missedPreferredKeywords: string[];
+  jdKeywords: string;
+}
+
+export interface FitRationale {
   strengths: string[];
   gaps: string[];
   verdict: string;
   jdSummary: string;
-  jdKeywords: string;
-  categories: FitCategory[];
   raw: string;
-}> {
-  const resumeText = await readResumeTextAsync(masterResumePath);
+}
 
-  const raw = await callLlm(
-    FIT_PROMPT.replace("{job_description}", jobDescription.slice(0, 4000)).replace(
-      "{resume_text}",
-      resumeText.slice(0, 3000)
-    ),
-    768
+export interface FitResult extends FitScores, FitRationale {
+  categories: FitCategory[];
+}
+
+// Stage A — fast: 1 LLM call + deterministic scoring. Resolves in ~2-4 s.
+export async function analyzeFitScores(
+  jobDescription: string,
+  masterResumePath: string
+): Promise<FitScores> {
+  const resumeText = await readResumeTextAsync(masterResumePath);
+  const requirements = await extractJobRequirements(jobDescription, resumeText);
+
+  const coverage = calculateKeywordCoverage(
+    requirements.required_keywords,
+    requirements.preferred_keywords,
+    resumeText
   );
+  const hardreqScore = calculateHardReqScore(requirements.hard_requirements);
+  const parseabilityScore = calculateParseability(resumeText);
+  const fitScore = blendFitScore(coverage.score, hardreqScore, parseabilityScore);
+
+  const jdKeywords = [
+    ...requirements.required_keywords,
+    ...requirements.preferred_keywords,
+  ].join(", ");
 
   return {
-    fitScore: parseFitScore(raw),
+    fitScore,
+    keywordScore: coverage.score,
+    hardreqScore,
+    parseabilityScore,
+    requirements,
+    matchedRequiredKeywords: coverage.requiredHits,
+    missedRequiredKeywords: coverage.requiredMisses,
+    matchedPreferredKeywords: coverage.preferredHits,
+    missedPreferredKeywords: coverage.preferredMisses,
+    jdKeywords,
+  };
+}
+
+// Stage B — slower: rationale text only. Resolves in another ~2-3 s.
+// Independent of Stage A so they can pipeline across many jobs.
+export async function generateFitRationale(
+  jobDescription: string,
+  masterResumePath: string
+): Promise<FitRationale> {
+  const resumeText = await readResumeTextAsync(masterResumePath);
+  const rationalePrompt = RATIONALE_PROMPT
+    .replace("{job_description}", jobDescription.slice(0, 4000))
+    .replace("{resume_text}", resumeText.slice(0, 3000));
+  const raw = await callLlm(rationalePrompt, 512);
+  return {
+    raw,
     strengths: parseFitField(raw, "STRENGTHS")
       .split(",")
       .map((s) => s.trim())
@@ -1143,8 +1326,17 @@ export async function generateFitSummary(
       .filter(Boolean),
     verdict: parseFitField(raw, "VERDICT"),
     jdSummary: parseFitField(raw, "JD_SUMMARY"),
-    jdKeywords: parseFitField(raw, "JD_KEYWORDS"),
-    categories: parseFitCategories(raw),
-    raw,
   };
+}
+
+// Compatibility wrapper for call sites that want both. New code should
+// prefer Stage A + Stage B so the score lands in the DB before the
+// rationale completes.
+export async function generateFitSummary(
+  jobDescription: string,
+  masterResumePath: string
+): Promise<FitResult> {
+  const scores = await analyzeFitScores(jobDescription, masterResumePath);
+  const rationale = await generateFitRationale(jobDescription, masterResumePath);
+  return { ...scores, ...rationale, categories: [] };
 }

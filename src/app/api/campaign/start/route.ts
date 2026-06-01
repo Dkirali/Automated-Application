@@ -13,7 +13,6 @@ export async function POST(request: NextRequest) {
   const workTypes = formData.getAll("work_type") as string[];
   const experienceLevels = formData.getAll("exp_level") as string[];
   const datePosted = (formData.get("date_posted") as string) || "";
-  const preferredModel = (formData.get("preferred_model") as string) || "auto";
 
   const titles = titlesRaw
     .split(",")
@@ -36,7 +35,6 @@ export async function POST(request: NextRequest) {
     name: titlesRaw,
     titles: titlesRaw,
     locations: locationText,
-    preferredModel,
   });
 
   setAlert(null);
