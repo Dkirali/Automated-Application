@@ -724,12 +724,51 @@ export function getRateLimitState(): { rateLimited: boolean; retryAt: number; me
   };
 }
 
+// A daily-quota exhaustion looks like a long retry-after (resets at UTC
+// midnight) or usage already at/over the cap. A short minute-window blip is
+// neither — we leave those to the existing pause/auto-resume behavior.
+export const DAILY_STOP_THRESHOLD_MS = 5 * 60_000;
+
+export function isDailyExhaustion(
+  retryAtMs: number,
+  usedTokens: number,
+  dailyLimit: number,
+  now: number = Date.now()
+): boolean {
+  return retryAtMs - now >= DAILY_STOP_THRESHOLD_MS || usedTokens >= dailyLimit;
+}
+
+// Lazily require db/campaign to avoid a circular import (matches trackUsage).
+function maybeStopForDailyExhaustion(retryAtMs: number): void {
+  try {
+    const { getApiUsageToday, getConfig, getActiveCampaign, updateCampaignStatus } =
+      require("./db");
+    const model = getActiveModel();
+    let usedTokens = 0;
+    let dailyLimit = 100_000;
+    if (model) {
+      const usage = getApiUsageToday();
+      usedTokens = usage.tokensByModel?.[model.usageKey] ?? 0;
+      dailyLimit = Number(getConfig("daily_token_limit")) || 100_000;
+    }
+    if (!isDailyExhaustion(retryAtMs, usedTokens, dailyLimit)) return;
+
+    const { stopCampaign } = require("./campaign");
+    stopCampaign();
+    const campaign = getActiveCampaign();
+    if (campaign) updateCampaignStatus(campaign.id, "stopped", "rate_limited");
+  } catch {
+    // Never let a stop failure mask the original RateLimitError.
+  }
+}
+
 function setRateLimited(retryAtMs: number, message: string): void {
   // Take the later of the two — never reduce the back-off window.
   if (retryAtMs > llmG.__jobbot_rate_limit_until) {
     llmG.__jobbot_rate_limit_until = retryAtMs;
     llmG.__jobbot_rate_limit_msg = message;
   }
+  maybeStopForDailyExhaustion(retryAtMs);
 }
 
 // Clear the cached back-off — used when the user explicitly wants to retry
