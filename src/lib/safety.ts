@@ -19,7 +19,8 @@ export function classifyStopSignal(signal: string): StopSignal | null {
   return map[signal] ?? null;
 }
 
-async function checkPageForStopSignal(page: Page): Promise<StopSignal | null> {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for future authwall detection
+async function _checkPageForStopSignal(page: Page): Promise<StopSignal | null> {
   const url = page.url().toLowerCase();
 
   if (url.includes("checkpoint") || url.includes("challenge")) {

@@ -181,15 +181,18 @@ export function updateCampaignStatus(
     .run(status, new Date().toISOString(), stopReason ?? null, campaignId);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getActiveCampaign(): Record<string, any> | null {
   const row = getConn()
     .prepare(
       "SELECT * FROM campaigns WHERE status='running' ORDER BY started_at DESC LIMIT 1"
     )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .get() as Record<string, any> | undefined;
   return row ?? null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getAllCampaigns(): Record<string, any>[] {
   return getConn()
     .prepare(
@@ -204,6 +207,7 @@ export function getAllCampaigns(): Record<string, any>[] {
       ORDER BY c.started_at DESC
       LIMIT 20`
     )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .all() as Record<string, any>[];
 }
 
@@ -234,7 +238,7 @@ export function insertApplication(params: {
         new Date().toISOString()
       );
     return Number(result.lastInsertRowid);
-  } catch (e: any) {
+  } catch (e: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (e.code === "SQLITE_CONSTRAINT_UNIQUE") return null;
     throw e;
   }
@@ -293,26 +297,32 @@ export function updateApplication(
     );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getApplication(appId: number): Record<string, any> | null {
   const row = getConn()
     .prepare("SELECT * FROM applications WHERE id=?")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .get(appId) as Record<string, any> | undefined;
   return row ?? null;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getPendingJobs(): Record<string, any>[] {
   return getConn()
     .prepare(
-      "SELECT * FROM applications WHERE status IN ('pending','reviewed') ORDER BY created_at DESC"
+      "SELECT * FROM applications WHERE status IN ('pending','tailoring','reviewed') ORDER BY created_at DESC"
     )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .all() as Record<string, any>[];
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getAllApplications(): Record<string, any>[] {
   return getConn()
     .prepare(
       "SELECT * FROM applications WHERE status IN ('applied','failed','discarded') ORDER BY COALESCE(created_at, applied_at) DESC"
     )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .all() as Record<string, any>[];
 }
 
@@ -353,9 +363,11 @@ export function insertManual(
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getManualQueue(): Record<string, any>[] {
   return getConn()
     .prepare("SELECT * FROM manual_queue ORDER BY added_at DESC")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .all() as Record<string, any>[];
 }
 
@@ -404,4 +416,16 @@ export function getApiUsageToday(): ApiUsageToday {
     tokensByModel[r.model_key] = r.tokens;
   }
   return { counts, tokensByModel };
+}
+
+// Aggregate today's usage across every model. The dashboard gauge shows total
+// daily spend, since fit scoring runs on the fast model while tailoring runs on
+// the flagship — reporting a single model would leave the gauge stuck at 0.
+export function getApiUsageTotalsToday(): { tokens: number; calls: number } {
+  const usage = getApiUsageToday();
+  let tokens = 0;
+  let calls = 0;
+  for (const t of Object.values(usage.tokensByModel)) tokens += t;
+  for (const c of Object.values(usage.counts)) calls += c;
+  return { tokens, calls };
 }

@@ -1,5 +1,6 @@
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync, mkdirSync, writeFileSync, statSync } from "fs";
+import { resolve, join } from "path";
+import mammoth from "mammoth";
 import { getConfig } from "./db";
 import {
   blendFitScore,
@@ -223,7 +224,8 @@ STRENGTHS: <comma-separated list of 2-4 matching skills or experiences>
 GAPS: <comma-separated list of 1-3 missing or weak areas, or "None">
 VERDICT: <one sentence — would you recommend applying? why?>`;
 
-const FIT_PROMPT = `You are a senior recruiter evaluating a candidate's fit for a role.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for reference; superseded by COMBINED_FIT_PROMPT
+const _FIT_PROMPT = `You are a senior recruiter evaluating a candidate's fit for a role.
 
 Job Posting:
 {job_description}
@@ -308,14 +310,15 @@ RESUME:
 
 // ── Rate limiting ───────────────────────────────────────────────────────
 
-// Groq free tier is 30 req/min = 1 every 2 s. 2000 ms keeps us under the
-// limit while doubling throughput vs. the previous 4 s.
+// Groq free tier is 30 req/min = 1 every 2 s, applied per model. 2000 ms keeps
+// us under the limit. Tracked per-model (see llmG.__jobbot_last_call) so that a
+// slow flagship tailoring call doesn't delay fast fit-scoring calls.
 const LLM_MIN_INTERVAL = 2000;
-let llmLastCall = 0;
 
 function trackUsage(usageKey: string, tokens: number = 0): void {
   try {
-    const { incrementApiUsage } = require("./db");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { incrementApiUsage } = require("./db"); // lazy: avoids circular import (db ← resume ← db)
     incrementApiUsage(usageKey, tokens);
   } catch {
     // non-critical
@@ -646,13 +649,29 @@ export function extractMasterFacts(masterText: string): MasterResumeFacts {
     }
   }
 
+  // Languages are validated strictly (each must survive into the tailored
+  // resume), so we must only collect genuine language entries. PDF parsing of
+  // multi-column resumes concatenates adjacent headings (e.g. a literal
+  // "CertificatesInternships" line) and scatters certificates/dates into the
+  // LANGUAGES section, so a naive "first token before a dash" grab pulls in
+  // garbage that then fails validation forever. Require the canonical
+  // "<Language> – <Proficiency>" shape with a known proficiency word.
+  const PROFICIENCY =
+    /^(native|bilingual|fluent|proficient|professional|full professional|working|limited|conversational|advanced|upper[- ]?intermediate|intermediate|pre[- ]?intermediate|elementary|beginner|basic|mother tongue|[abc][12])\b/i;
   const languages: string[] = [];
   if (langs) {
     for (const raw of lines.slice(langs.start, langs.end)) {
       const line = raw.trim();
       if (!line) continue;
-      const lang = line.split(/[–\-]/)[0].trim();
-      if (lang) languages.push(lang);
+      const parts = line.split(/[–-]/);
+      if (parts.length < 2) continue; // needs "<name> - <proficiency>"
+      const name = parts[0].trim();
+      const proficiency = parts.slice(1).join("-").trim();
+      // A real language name: alphabetic, no digits/colons, not a heading glob.
+      if (!name || name.length > 30 || /[0-9:]/.test(name)) continue;
+      if (!/^[A-Za-z][A-Za-z ()'.]*$/.test(name)) continue;
+      if (!PROFICIENCY.test(proficiency)) continue;
+      languages.push(name);
     }
   }
 
@@ -666,6 +685,98 @@ export function extractMasterFacts(masterText: string): MasterResumeFacts {
   }
 
   return { roles, additionalRoles, education, languages, certificates };
+}
+
+// Line-based parsing (extractMasterFacts) breaks on multi-column PDFs that
+// flatten into scrambled text — roles come back empty, leaving the tailoring
+// LLM with no ground truth (it then mismatches titles/companies/dates). This
+// extracts the same facts via one fast-model call, which is layout-agnostic.
+// Cached per resume text; falls back to the regex parser on any failure.
+const FACTS_PROMPT = `Extract structured facts from the resume below. Return ONLY a JSON object (no prose, no markdown fences) with this exact shape:
+{
+  "roles": [{"company": "", "role": "", "location": "", "dates": ""}],
+  "additionalRoles": [{"company": "", "role": "", "location": "", "dates": ""}],
+  "education": [{"school": "", "degree": "", "location": "", "dates": ""}],
+  "languages": [""],
+  "certificates": [""]
+}
+Rules:
+- Copy companies, job titles, schools, and date ranges EXACTLY as written. Never invent, merge, or swap them.
+- "roles" = primary professional positions, ordered most-recent first. "additionalRoles" = internships / short-term / volunteer roles.
+- Keep each role's company, title, and dates together as they appear in the resume.
+- "languages" = spoken/human languages only (e.g. English, Turkish). EXCLUDE programming languages and tools.
+- Use an empty array for any absent section.
+
+RESUME:
+{resume_text}`;
+
+const factsCache = new Map<string, MasterResumeFacts>();
+
+interface RawRole { company?: unknown; role?: unknown; location?: unknown; dates?: unknown }
+function coerceRoles(arr: unknown): RoleFact[] {
+  if (!Array.isArray(arr)) return [];
+  const out: RoleFact[] = [];
+  for (const r of arr as RawRole[]) {
+    const company = String(r?.company ?? "").trim();
+    const role = String(r?.role ?? "").trim();
+    if (!company && !role) continue;
+    out.push({
+      company,
+      role,
+      location: String(r?.location ?? "").trim(),
+      dates: String(r?.dates ?? "").trim(),
+    });
+  }
+  return out;
+}
+
+export async function extractMasterFactsSmart(
+  resumeText: string
+): Promise<MasterResumeFacts> {
+  const cached = factsCache.get(resumeText);
+  if (cached) return cached;
+  try {
+    const raw = await callLlm(
+      FACTS_PROMPT.replace("{resume_text}", resumeText.slice(0, 7000)),
+      1500,
+      undefined,
+      getFastModel() ?? undefined
+    );
+    const obj = extractJsonObject(raw) as Record<string, unknown> | null;
+    if (obj) {
+      const facts: MasterResumeFacts = {
+        roles: coerceRoles(obj.roles),
+        additionalRoles: coerceRoles(obj.additionalRoles),
+        education: Array.isArray(obj.education)
+          ? (obj.education as RawRole[])
+              .map((e) => ({
+                school: String(e?.company ?? (e as Record<string, unknown>)?.school ?? "").trim(),
+                degree: String(e?.role ?? (e as Record<string, unknown>)?.degree ?? "").trim(),
+                location: String(e?.location ?? "").trim(),
+                dates: String(e?.dates ?? "").trim(),
+              }))
+              .filter((e) => e.school || e.degree)
+          : [],
+        languages: Array.isArray(obj.languages)
+          ? (obj.languages as unknown[]).map((l) => String(l).trim()).filter(Boolean)
+          : [],
+        certificates: Array.isArray(obj.certificates)
+          ? (obj.certificates as unknown[]).map((c) => String(c).trim()).filter(Boolean)
+          : [],
+      };
+      // Only trust the LLM result if it found real experience; otherwise the
+      // regex fallback is no worse and avoids caching an empty result.
+      if (facts.roles.length || facts.additionalRoles.length) {
+        factsCache.set(resumeText, facts);
+        return facts;
+      }
+    }
+  } catch (err) {
+    console.error("[facts] LLM extraction failed, using regex fallback:", err);
+  }
+  const fallback = extractMasterFacts(resumeText);
+  factsCache.set(resumeText, fallback);
+  return fallback;
 }
 
 export function validateTailoredResume(
@@ -732,27 +843,40 @@ export function validateTailoredResume(
 
 // ── Resume reading ──────────────────────────────────────────────────────
 
+// Parsing the master resume (PDF/DOCX especially) is expensive, and it's the
+// same file for every job in a campaign — fit analysis previously re-read and
+// re-parsed it once per scored job. Memoize by path + mtime so a re-saved
+// resume still invalidates the cache.
+const resumeTextCache = new Map<string, string>();
+
 export async function readResumeTextAsync(filePath: string): Promise<string> {
+  let cacheKey = filePath;
+  try {
+    cacheKey = `${filePath}:${statSync(filePath).mtimeMs}`;
+  } catch {
+    // stat failed (missing file) — fall through; parseResumeText surfaces it.
+  }
+  const cached = resumeTextCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const text = await parseResumeText(filePath);
+  resumeTextCache.set(cacheKey, text);
+  return text;
+}
+
+async function parseResumeText(filePath: string): Promise<string> {
   const ext = filePath.toLowerCase().split(".").pop();
   if (ext === "txt") {
-    const { readFileSync } = require("fs");
     return readFileSync(filePath, "utf-8").trim();
   }
-  if (ext === "docx") {
-    const mammoth = require("mammoth");
-    const result = await mammoth.extractRawText({ path: filePath });
-    return (result.value as string).trim();
-  }
-  if (ext === "doc") {
-    const mammoth = require("mammoth");
+  if (ext === "docx" || ext === "doc") {
     const result = await mammoth.extractRawText({ path: filePath });
     return (result.value as string).trim();
   }
   if (ext === "pdf") {
     // pdf-parse has a bug where require() tries to load a test file.
     // Import the core module directly to avoid it.
-    const pdfParse = require("pdf-parse/lib/pdf-parse");
-    const { readFileSync } = require("fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfParse = require("pdf-parse/lib/pdf-parse"); // lazy: avoids pdf-parse test-file side-effect on load
     const buffer = readFileSync(filePath);
     const data = await pdfParse(buffer);
     return (data.text as string).trim();
@@ -781,7 +905,10 @@ interface LlmGlobals {
   __jobbot_rate_limit_until: number;
   __jobbot_rate_limit_msg: string;
   __jobbot_token_windows?: Record<string, TokenWindowEntry[]>;
-  __jobbot_tpm_lock?: Promise<void>;
+  // Per-model serialization lock + last-call timestamp, keyed by usageKey, so
+  // models (fast fit-scoring vs flagship tailoring) pace independently.
+  __jobbot_tpm_locks?: Record<string, Promise<void>>;
+  __jobbot_last_call?: Record<string, number>;
 }
 const llmG = globalThis as unknown as LlmGlobals;
 if (llmG.__jobbot_rate_limit_until === undefined) llmG.__jobbot_rate_limit_until = 0;
@@ -836,9 +963,10 @@ async function reserveTokenBudget(
   tpm: number,
   est: number
 ): Promise<TokenWindowEntry> {
-  const prev = llmG.__jobbot_tpm_lock ?? Promise.resolve();
+  if (!llmG.__jobbot_tpm_locks) llmG.__jobbot_tpm_locks = {};
+  const prev = llmG.__jobbot_tpm_locks[key] ?? Promise.resolve();
   let release!: () => void;
-  llmG.__jobbot_tpm_lock = new Promise<void>((r) => (release = r));
+  llmG.__jobbot_tpm_locks[key] = new Promise<void>((r) => (release = r));
   await prev.catch(() => {});
   try {
     const window = getTokenWindow(key);
@@ -896,8 +1024,8 @@ export function isDailyExhaustion(
 // Lazily require db/campaign to avoid a circular import (matches trackUsage).
 function maybeStopForDailyExhaustion(retryAtMs: number): void {
   try {
-    const { getApiUsageToday, getConfig, getActiveCampaign, updateCampaignStatus } =
-      require("./db");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getApiUsageToday, getConfig, getActiveCampaign, updateCampaignStatus } = require("./db"); // lazy: avoids circular import (db ← resume ← db)
     const model = getActiveModel();
     let usedTokens = 0;
     let dailyLimit = DEFAULT_DAILY_TOKEN_LIMIT;
@@ -908,7 +1036,8 @@ function maybeStopForDailyExhaustion(retryAtMs: number): void {
     }
     if (!isDailyExhaustion(retryAtMs, usedTokens, dailyLimit)) return;
 
-    const { stopCampaign } = require("./campaign");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { stopCampaign } = require("./campaign"); // lazy: avoids circular import (campaign ← resume ← campaign)
     stopCampaign();
     const campaign = getActiveCampaign();
     if (campaign) updateCampaignStatus(campaign.id, "stopped", "rate_limited");
@@ -1020,13 +1149,6 @@ async function callLlm(
   if (rl.rateLimited) {
     throw new RateLimitError(rl.retryAt, rl.message);
   }
-  // Enforce minimum interval
-  const now = Date.now();
-  const elapsed = now - llmLastCall;
-  if (elapsed < LLM_MIN_INTERVAL) {
-    await new Promise((r) => setTimeout(r, LLM_MIN_INTERVAL - elapsed));
-  }
-  llmLastCall = Date.now();
 
   const model = modelOverride ?? getActiveModel();
   if (!model) {
@@ -1041,6 +1163,16 @@ async function callLlm(
       `Active provider is ${model.provider} but ${model.envKey} is not set.`
     );
   }
+
+  // Enforce minimum request interval, per model, so the flagship and fast
+  // models don't serialize against each other's spacing.
+  if (!llmG.__jobbot_last_call) llmG.__jobbot_last_call = {};
+  const last = llmG.__jobbot_last_call[model.usageKey] ?? 0;
+  const elapsed = Date.now() - last;
+  if (elapsed < LLM_MIN_INTERVAL) {
+    await new Promise((r) => setTimeout(r, LLM_MIN_INTERVAL - elapsed));
+  }
+  llmG.__jobbot_last_call[model.usageKey] = Date.now();
 
   // Pace against the model's per-minute token budget. Estimate = prompt tokens
   // (~chars/4) + the max output, so we reserve conservatively and reconcile to
@@ -1068,7 +1200,8 @@ async function callLlm(
 
   const callers: Record<ActiveProvider, () => Promise<LlmResult>> = {
     groq: async () => {
-      const Groq = require("groq-sdk");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const Groq = require("groq-sdk"); // lazy: SDK only loaded when groq provider is active
       const client = new Groq({ apiKey });
       const message = await client.chat.completions.create({
         model: model.modelId,
@@ -1080,8 +1213,9 @@ async function callLlm(
       return { text: message.choices[0].message.content, tokens: extractTokenCount("groq", message) };
     },
     anthropic: async () => {
-      const Anthropic =
-        require("@anthropic-ai/sdk").default || require("@anthropic-ai/sdk");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const anthropicSdk = require("@anthropic-ai/sdk"); // lazy: SDK only loaded when anthropic provider is active
+      const Anthropic = anthropicSdk.default || anthropicSdk;
       const client = new Anthropic({ apiKey });
       const message = await client.messages.create({
         model: model.modelId,
@@ -1157,21 +1291,23 @@ async function writeTailoredDocx(
   outputPath: string,
   header: CandidateHeader
 ): Promise<void> {
-  const {
-    Document, Packer, Paragraph, TextRun, AlignmentType,
-    TabStopPosition, TabStopType,
-  } = require("docx");
-  const { writeFileSync } = require("fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const docxModule = require("docx"); // lazy: docx package only needed at write time, avoids heavy load on import
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, TabStopType } = docxModule;
 
+  // Type scale matched to the Doruk_Kirali_Head_of_Product.docx template.
   const FONT = "Calibri";
-  const SIZE_NAME = 28;       // 14pt
-  const SIZE_SUBTITLE = 22;   // 11pt
+  const SIZE_NAME = 36;       // 18pt
+  const SIZE_SUBTITLE = 24;   // 12pt
   const SIZE_CONTACT = 18;    // 9pt
-  const SIZE_SECTION = 22;    // 11pt
-  const SIZE_BODY = 20;       // 10pt
-  const SIZE_COMPANY = 21;    // 10.5pt
-  const RIGHT_TAB = 9500;     // right-aligned tab position in twips
+  const SIZE_SECTION = 22;    // 11pt (bold section headings)
+  const SIZE_META = 20;       // 10pt (company, role title, location/date)
+  const SIZE_TEXT = 22;       // 11pt (bullets and section body lines)
+  const SIZE_COMPANY = 20;    // 10pt
+  // Content width with the template's 0.75" L/R margins: 12240 - 2*1080 = 10080.
+  const RIGHT_TAB = 10080;    // right-aligned tab position in twips
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const children: any[] = [];
 
   // ── Header: Name (if present) ──
@@ -1265,8 +1401,8 @@ async function writeTailoredDocx(
           tabStops: [{ type: TabStopType.RIGHT, position: RIGHT_TAB }],
           spacing: { after: 60 },
           children: [
-            new TextRun({ text: roleLine, bold: true, size: SIZE_BODY, font: FONT }),
-            new TextRun({ text: `\t${parsed.locationDate}`, size: SIZE_BODY, font: FONT, color: "555555" }),
+            new TextRun({ text: roleLine, bold: true, size: SIZE_META, font: FONT }),
+            new TextRun({ text: `\t${parsed.locationDate}`, size: SIZE_META, font: FONT, color: "555555" }),
           ],
         }));
       } else {
@@ -1275,8 +1411,8 @@ async function writeTailoredDocx(
           tabStops: [{ type: TabStopType.RIGHT, position: RIGHT_TAB }],
           spacing: { after: 60 },
           children: [
-            new TextRun({ text: parsed.company, bold: true, size: SIZE_BODY, font: FONT }),
-            new TextRun({ text: `\t${parsed.locationDate}`, size: SIZE_BODY, font: FONT, color: "555555" }),
+            new TextRun({ text: parsed.company, bold: true, size: SIZE_META, font: FONT }),
+            new TextRun({ text: `\t${parsed.locationDate}`, size: SIZE_META, font: FONT, color: "555555" }),
           ],
         }));
       }
@@ -1289,7 +1425,7 @@ async function writeTailoredDocx(
       children.push(new Paragraph({
         bullet: { level: 0 },
         spacing: { after: 40 },
-        children: [new TextRun({ text: bulletText, size: SIZE_BODY, font: FONT })],
+        children: [new TextRun({ text: bulletText, size: SIZE_TEXT, font: FONT })],
       }));
       continue;
     }
@@ -1297,7 +1433,7 @@ async function writeTailoredDocx(
     // Regular paragraph
     children.push(new Paragraph({
       spacing: { after: 40 },
-      children: [new TextRun({ text: trimmed, size: SIZE_BODY, font: FONT })],
+      children: [new TextRun({ text: trimmed, size: SIZE_TEXT, font: FONT })],
     }));
   }
 
@@ -1305,7 +1441,8 @@ async function writeTailoredDocx(
     sections: [{
       properties: {
         page: {
-          margin: { top: 720, right: 720, bottom: 720, left: 720 },
+          // Match template: 0.5" top/bottom, 0.75" left/right (US Letter).
+          margin: { top: 720, right: 1080, bottom: 720, left: 1080 },
         },
       },
       children,
@@ -1346,6 +1483,56 @@ function renderGroundTruth(facts: MasterResumeFacts): string {
   return lines.join("\n");
 }
 
+// Build the resume header from saved config (authoritative) instead of
+// re-parsing it out of the master PDF, which flattens unreliably (often losing
+// the contact line and truncating the name). The headline is the candidate's
+// most recent role title from their experience — "the latest title they have".
+function buildHeaderFromConfig(facts: MasterResumeFacts): CandidateHeader {
+  const clean = (v: string | null): string | undefined => {
+    const t = (v ?? "").trim();
+    return t || undefined;
+  };
+  return {
+    name: clean(getConfig("name")),
+    headline: latestRoleTitle(facts),
+    phone: clean(getConfig("phone")),
+    email: clean(getConfig("email")),
+    linkedin: clean(getConfig("linkedin")),
+    github: clean(getConfig("github")),
+  };
+}
+
+// The candidate's most recent role title. Resumes list experience newest-first,
+// so the first parsed role is normally the latest; fall back across sections.
+export function latestRoleTitle(facts: MasterResumeFacts): string | undefined {
+  const role = facts.roles[0]?.role || facts.additionalRoles[0]?.role || "";
+  return role.trim() || undefined;
+}
+
+// Derive the candidate's latest title from the (clean) tailored resume text:
+// the role whose date range ends latest. Master-PDF parsing is unreliable on
+// multi-column layouts (roles often come back empty), so we read the generated
+// output, where each experience entry is "Company | Location | Dates" followed
+// by the role title on the next line.
+export function deriveLatestTitle(tailoredText: string): string | undefined {
+  const lines = tailoredText.split("\n").map((l) => l.trim());
+  let best: { title: string; end: number } | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const parsed = isCompanyOrRoleLine(lines[i]);
+    if (!parsed?.locationDate) continue;
+    let j = i + 1;
+    while (j < lines.length && !lines[j]) j++;
+    const title = lines[j] || "";
+    if (!title || /^[•\-–]/.test(title) || isAllCapsSection(title)) continue;
+    const ld = parsed.locationDate;
+    const end = /present|current|now|ongoing/i.test(ld)
+      ? 9999
+      : Math.max(0, ...(ld.match(/\b(?:19|20)\d{2}\b/g) || []).map(Number));
+    if (!best || end > best.end) best = { title, end };
+  }
+  return best?.title;
+}
+
 export async function tailorResume(
   jobId: number,
   jobDescription: string,
@@ -1362,8 +1549,8 @@ export async function tailorResume(
   modelUsed: string;
 }> {
   const resumeText = await readResumeTextAsync(masterResumePath);
-  const facts = extractMasterFacts(resumeText);
-  const header = parseCandidateHeader(resumeText, facts);
+  const facts = await extractMasterFactsSmart(resumeText);
+  const header = buildHeaderFromConfig(facts);
   const groundTruth = renderGroundTruth(facts);
 
   const prompt = TAILOR_PROMPT
@@ -1381,14 +1568,16 @@ export async function tailorResume(
   if (!tailoredText) tailoredText = resumeText;
   tailoredText = normalizeDashes(tailoredText);
 
+  // Headline = the candidate's latest title. Prefer deriving from the tailored
+  // output (reliable) and fall back to whatever the master parse yielded.
+  header.headline = deriveLatestTitle(tailoredText) ?? header.headline;
+
   const atsScore = calculateAtsScore(keywords, tailoredText);
   const originalAtsScore = calculateAtsScore(
     keywords,
     await readResumeTextAsync(masterResumePath)
   );
 
-  const { mkdirSync, writeFileSync } = require("fs");
-  const { join } = require("path");
   const jobDir = join(RESUMES_DIR, String(jobId));
   mkdirSync(jobDir, { recursive: true });
 

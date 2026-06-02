@@ -164,7 +164,7 @@ interface JobCard {
   url: string | null;
 }
 
-async function parseJobCard(card: any): Promise<JobCard> {
+async function parseJobCard(card: { locator: (sel: string) => { count: () => Promise<number>; first: () => { innerText: () => Promise<string>; getAttribute: (attr: string) => Promise<string | null> } } }): Promise<JobCard> {
   async function tryText(...selectors: string[]): Promise<string> {
     for (const sel of selectors) {
       try {
@@ -374,7 +374,7 @@ export async function scrapeJobs(
         ".base-search-card",
         "li.scaffold-layout__list-item",
       ];
-      let cards: any[] = [];
+      let cards: Awaited<ReturnType<typeof page.locator>>[] = [];
       for (const sel of cardSelectors) {
         const found = await page.locator(sel).all();
         if (found.length > 0) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 interface Props {
   initialConnected: boolean;
@@ -83,15 +84,15 @@ export default function LinkedinStepClient({ initialConnected }: Props) {
           )}
 
           {connected && (
-            <a href="/" className="btn btn-primary btn-full">
+            <Link href="/" className="btn btn-primary btn-full">
               Go to dashboard →
-            </a>
+            </Link>
           )}
 
           {!connected && (
-            <a href="/" className="form-skip-link">
+            <Link href="/" className="form-skip-link">
               Skip for now — I&apos;ll connect later from Settings
-            </a>
+            </Link>
           )}
         </div>
       </div>

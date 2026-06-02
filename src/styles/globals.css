@@ -1528,6 +1528,15 @@ a:hover { text-decoration: underline; }
   background: var(--clr-primary-tint);
   border-color: var(--clr-primary);
 }
+.bulk-bar-btn--tailor {
+  background: var(--clr-primary-tint);
+  color: var(--clr-primary-light);
+  border-color: rgba(0,212,255,.3);
+}
+.bulk-bar-btn--tailor:hover {
+  border-color: var(--clr-primary);
+  box-shadow: 0 0 8px rgba(0,212,255,.25);
+}
 .bulk-bar-btn--discard {
   background: var(--clr-danger-tint);
   color: var(--clr-danger);

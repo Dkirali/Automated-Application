@@ -36,6 +36,10 @@ export async function POST(request: NextRequest) {
   setConfig("email", email);
   setConfig("phone", phone);
 
+  // Optional contact links shown in the tailored-resume header.
+  setConfig("linkedin", (formData.get("linkedin") as string)?.trim() || "");
+  setConfig("github", (formData.get("github") as string)?.trim() || "");
+
   const dailyTokenLimitRaw = (formData.get("daily_token_limit") as string)?.trim() || "";
   if (dailyTokenLimitRaw) {
     const n = parseInt(dailyTokenLimitRaw, 10);

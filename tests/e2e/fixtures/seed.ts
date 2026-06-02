@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { homedir } from "os";
 import type { APIRequestContext } from "@playwright/test";

@@ -25,6 +25,8 @@ export default function SettingsPage() {
       name={getConfig("name") || ""}
       email={getConfig("email") || ""}
       phone={getConfig("phone") || ""}
+      linkedin={getConfig("linkedin") || ""}
+      github={getConfig("github") || ""}
       activeProvider={getActiveProvider()}
       configuredKeys={maskedKeys}
       currentResume={resumePath ? resumePath.split("/").pop() || null : null}
