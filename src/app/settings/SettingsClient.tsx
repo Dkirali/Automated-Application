@@ -18,6 +18,8 @@ interface SettingsClientProps {
   name: string;
   email: string;
   phone: string;
+  linkedin: string;
+  github: string;
   activeProvider: ActiveProvider | null;
   configuredKeys: Record<ActiveProvider, string | null>;
   currentResume: string | null;
@@ -29,6 +31,8 @@ export default function SettingsClient({
   name,
   email,
   phone,
+  linkedin,
+  github,
   activeProvider,
   configuredKeys,
   currentResume,
@@ -200,6 +204,20 @@ export default function SettingsClient({
               />
             </div>
             <input type="hidden" name="phone" value={phoneSubmitValue} />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="linkedin">
+              LinkedIn <span className="label-hint">(optional — shown in resume header)</span>
+            </label>
+            <input type="text" id="linkedin" name="linkedin" defaultValue={linkedin} placeholder="linkedin.com/in/your-handle" />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="github">
+              GitHub <span className="label-hint">(optional — shown in resume header)</span>
+            </label>
+            <input type="text" id="github" name="github" defaultValue={github} placeholder="github.com/your-handle" />
           </div>
 
           <div className="form-group">
