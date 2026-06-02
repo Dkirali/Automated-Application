@@ -503,7 +503,9 @@ export default function DashboardClient({
                           <div className="app-card-verdict" style={{ color: "var(--clr-text-muted)", fontSize: "11px" }}>⏳ Analyzing fit…</div>
                         )}
                         <div className="app-card-tailor-status" style={{ marginTop: "6px" }}>
-                          {isTailored ? (
+                          {job.status === "tailoring" ? (
+                            <span className="untailored-badge">⏳ Tailoring…</span>
+                          ) : isTailored ? (
                             <span className="tailored-model-badge">✓ {job.model_used}</span>
                           ) : (
                             <span className="untailored-badge">Not tailored</span>
@@ -555,6 +557,11 @@ export default function DashboardClient({
               <div className="bulk-bar" style={{ display: "flex" }}>
                 <span className="bulk-bar-count">{selectedJobs.size} selected</span>
                 <button type="button" className="bulk-bar-btn bulk-bar-btn--select-all" onClick={toggleSelectAll}>Select All</button>
+                <button type="button" className="bulk-bar-btn bulk-bar-btn--tailor" onClick={() => {
+                  const body = new FormData();
+                  selectedJobs.forEach((id) => body.append("job_ids", String(id)));
+                  fetch("/api/bulk-retailor", { method: "POST", body }).then(() => location.reload());
+                }}>Create Tailored Resume</button>
                 <button type="button" className="bulk-bar-btn bulk-bar-btn--discard" onClick={() => {
                   const body = new FormData();
                   selectedJobs.forEach((id) => body.append("job_ids", String(id)));

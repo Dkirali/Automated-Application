@@ -40,7 +40,7 @@ export default async function ReviewPage({ params, searchParams }: PageProps) {
   const appId = Number(id);
   const job = getApplication(appId);
 
-  if (!job || !["pending", "reviewed", "failed"].includes(job.status)) {
+  if (!job || !["pending", "tailoring", "reviewed", "failed"].includes(job.status)) {
     redirect("/");
   }
 
@@ -125,7 +125,7 @@ export default async function ReviewPage({ params, searchParams }: PageProps) {
     missedPreferred,
   };
 
-  const tailoringInProgress = !!sp.tailoring;
+  const tailoringInProgress = job.status === "tailoring" || !!sp.tailoring;
 
   return (
     <ReviewClient

@@ -119,7 +119,6 @@ export default function ReviewClient({ job, fit, tailoringInProgress }: ReviewCl
   const [apply, setApply] = useState<ApplyView>({ state: "idle", message: "" });
   const resumeRef = useRef<HTMLDivElement>(null);
   const applyPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const autoTailorTriggered = useRef(false);
 
   const scoreClass = (s: number) => (s >= 70 ? "high" : s >= 40 ? "medium" : "low");
   const lowFit = fit.fit_score > 0 && fit.fit_score < 50;
@@ -137,16 +136,6 @@ export default function ReviewClient({ job, fit, tailoringInProgress }: ReviewCl
     e.preventDefault();
     await startTailor();
   };
-
-  // Auto-tailor on first open if no tailored resume exists yet.
-  useEffect(() => {
-    if (autoTailorTriggered.current) return;
-    if (isTailoring) return;
-    if (currentJob.resume_path) return;
-    autoTailorTriggered.current = true;
-    startTailor();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const openConfirm = () => {
     setOverrideLowFit(false);
@@ -231,14 +220,20 @@ export default function ReviewClient({ job, fit, tailoringInProgress }: ReviewCl
     });
   }, []);
 
-  // Poll for tailoring completion
+  // Poll for tailoring completion. Tailoring moves the job through
+  // `tailoring` → `reviewed` (done) or `failed`. Stop on a terminal status, and
+  // bail after a timeout so a stuck background job can't spin the UI forever.
   useEffect(() => {
     if (!isTailoring) return;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 30; // ~2 min at 4s intervals
     const interval = setInterval(() => {
+      attempts += 1;
       fetch(`/api/job-status/${currentJob.id}`)
         .then((r) => r.json())
         .then((d) => {
-          if (d.status !== "pending") {
+          const inProgress = d.status === "pending" || d.status === "tailoring";
+          if (!inProgress) {
             clearInterval(interval);
             setIsTailoring(false);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -252,8 +247,12 @@ export default function ReviewClient({ job, fit, tailoringInProgress }: ReviewCl
               model_used: d.model_used ?? prev.model_used,
             }));
             setResumeHtml(null);
-            setResumeError(false);
+            setResumeError(d.status === "failed");
             setKwMatchCount(null);
+          } else if (attempts >= MAX_ATTEMPTS) {
+            clearInterval(interval);
+            setIsTailoring(false);
+            setResumeError(true);
           }
         })
         .catch(() => {});
@@ -532,11 +531,19 @@ export default function ReviewClient({ job, fit, tailoringInProgress }: ReviewCl
                   Tailoring resume… this takes about 30–60 seconds.
                 </div>
               </>
+            ) : currentJob.status === "failed" ? (
+              <div className="resume-not-tailored">
+                <div className="resume-not-tailored-icon">⚠</div>
+                <div className="resume-not-tailored-msg">Tailoring didn’t complete</div>
+                <div className="resume-not-tailored-hint">Something went wrong generating this resume — try again.</div>
+                <button type="button" className="btn-retailor" onClick={startTailor} style={{ marginTop: "12px" }}>⟳ Try again</button>
+              </div>
             ) : !currentJob.resume_path ? (
               <div className="resume-not-tailored">
                 <div className="resume-not-tailored-icon">◈</div>
                 <div className="resume-not-tailored-msg">Resume not tailored yet</div>
-                <div className="resume-not-tailored-hint">Click Re-tailor to generate your tailored resume for this role.</div>
+                <div className="resume-not-tailored-hint">Generate a tailored, ATS-optimized resume for this role.</div>
+                <button type="button" className="btn-retailor" onClick={startTailor} style={{ marginTop: "12px" }}>✦ Create tailored resume</button>
               </div>
             ) : resumeError ? (
               <p className="empty-note">Could not load resume.</p>

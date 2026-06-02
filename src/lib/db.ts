@@ -310,7 +310,7 @@ export function getApplication(appId: number): Record<string, any> | null {
 export function getPendingJobs(): Record<string, any>[] {
   return getConn()
     .prepare(
-      "SELECT * FROM applications WHERE status IN ('pending','reviewed') ORDER BY created_at DESC"
+      "SELECT * FROM applications WHERE status IN ('pending','tailoring','reviewed') ORDER BY created_at DESC"
     )
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .all() as Record<string, any>[];
