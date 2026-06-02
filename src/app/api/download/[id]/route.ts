@@ -13,9 +13,8 @@ export async function GET(
     return new NextResponse("Not found", { status: 404 });
   }
 
-  const resumePath = resolve(app.resume_path);
+  const resumePath = resolve(app.resume_path as string);
   // Prefer: PDF → DOCX → whatever was saved (txt)
-  const dir = resumePath.replace(/[/\\][^/\\]+$/, "");
   const baseName = resumePath.replace(/\.[^.]+$/, "");
   const pdfPath = baseName + ".pdf";
   const docxPath = baseName + ".docx";

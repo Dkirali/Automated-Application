@@ -23,8 +23,11 @@ interface DashboardProps {
   stats: { applied: number; manual: number; status: string };
   linkedinConnected: boolean;
   resumeName: string | null | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   pendingJobs: Record<string, any>[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   applications: Record<string, any>[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   campaigns: Record<string, any>[];
   alert: string | null;
 }
@@ -49,6 +52,7 @@ export default function DashboardClient({
   const [pendingPageSize, setPendingPageSize] = useState(20);
   const [appsPage, setAppsPage] = useState(1);
   const [appsPageSize, setAppsPageSize] = useState(20);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [fitModalJob, setFitModalJob] = useState<Record<string, any> | null>(null);
   const lastPendingCount = useRef(pendingJobs.length);
   const lastAnalyzedCount = useRef(

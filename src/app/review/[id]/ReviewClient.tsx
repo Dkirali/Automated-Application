@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 
 interface FitCategoryView {
   key: string;
@@ -16,6 +17,7 @@ interface HardReqView {
 }
 
 interface ReviewClientProps {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   job: Record<string, any>;
   fit: {
     fit_score: number;
@@ -188,8 +190,10 @@ export default function ReviewClient({ job, fit, tailoringInProgress }: ReviewCl
         setApply({ state: data.state, message: data.message || "", error: data.error });
         if (APPLY_TERMINAL.has(data.state)) {
           if (data.state === "applied") {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             setCurrentJob((p: Record<string, any>) => ({ ...p, status: "applied" }));
           } else if (data.state === "failed") {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             setCurrentJob((p: Record<string, any>) => ({ ...p, status: "failed" }));
           }
         }
@@ -237,6 +241,7 @@ export default function ReviewClient({ job, fit, tailoringInProgress }: ReviewCl
           if (d.status !== "pending") {
             clearInterval(interval);
             setIsTailoring(false);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             setCurrentJob((prev: Record<string, any>) => ({
               ...prev,
               status: d.status,
@@ -278,7 +283,7 @@ export default function ReviewClient({ job, fit, tailoringInProgress }: ReviewCl
       {/* Top Bar */}
       <div className="topbar">
         <div className="topbar-brand">
-          <a href="/" className="back-link">← JobBot</a>
+          <Link href="/" className="back-link">← JobBot</Link>
         </div>
         <div className="topbar-actions">
           <a href="/settings" className="icon-link">⚙ Settings</a>
@@ -585,7 +590,7 @@ export default function ReviewClient({ job, fit, tailoringInProgress }: ReviewCl
             <button type="submit" className="btn-discard">✗ Discard</button>
           </form>
         )}
-        <a href="/" className="btn-back-dash">Back to Dashboard</a>
+        <Link href="/" className="btn-back-dash">Back to Dashboard</Link>
       </div>
 
       {/* Confirmation modal */}

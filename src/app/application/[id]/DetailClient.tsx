@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 
 interface DetailClientProps {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   application: Record<string, any>;
 }
 
@@ -106,7 +108,7 @@ export default function DetailClient({ application }: DetailClientProps) {
     <div className="container">
       <div className="topbar">
         <div className="topbar-brand">
-          <a href="/" className="back-link">← JobBot</a>
+          <Link href="/" className="back-link">← JobBot</Link>
         </div>
         <div className="topbar-actions">
           <a href="/settings" className="icon-link">⚙ Settings</a>

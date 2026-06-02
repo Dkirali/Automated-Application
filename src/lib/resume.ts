@@ -1,5 +1,6 @@
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync, mkdirSync, writeFileSync } from "fs";
+import { resolve, join } from "path";
+import mammoth from "mammoth";
 import { getConfig } from "./db";
 import {
   blendFitScore,
@@ -223,7 +224,8 @@ STRENGTHS: <comma-separated list of 2-4 matching skills or experiences>
 GAPS: <comma-separated list of 1-3 missing or weak areas, or "None">
 VERDICT: <one sentence — would you recommend applying? why?>`;
 
-const FIT_PROMPT = `You are a senior recruiter evaluating a candidate's fit for a role.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for reference; superseded by COMBINED_FIT_PROMPT
+const _FIT_PROMPT = `You are a senior recruiter evaluating a candidate's fit for a role.
 
 Job Posting:
 {job_description}
@@ -315,7 +317,8 @@ let llmLastCall = 0;
 
 function trackUsage(usageKey: string, tokens: number = 0): void {
   try {
-    const { incrementApiUsage } = require("./db");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { incrementApiUsage } = require("./db"); // lazy: avoids circular import (db ← resume ← db)
     incrementApiUsage(usageKey, tokens);
   } catch {
     // non-critical
@@ -735,24 +738,17 @@ export function validateTailoredResume(
 export async function readResumeTextAsync(filePath: string): Promise<string> {
   const ext = filePath.toLowerCase().split(".").pop();
   if (ext === "txt") {
-    const { readFileSync } = require("fs");
     return readFileSync(filePath, "utf-8").trim();
   }
-  if (ext === "docx") {
-    const mammoth = require("mammoth");
-    const result = await mammoth.extractRawText({ path: filePath });
-    return (result.value as string).trim();
-  }
-  if (ext === "doc") {
-    const mammoth = require("mammoth");
+  if (ext === "docx" || ext === "doc") {
     const result = await mammoth.extractRawText({ path: filePath });
     return (result.value as string).trim();
   }
   if (ext === "pdf") {
     // pdf-parse has a bug where require() tries to load a test file.
     // Import the core module directly to avoid it.
-    const pdfParse = require("pdf-parse/lib/pdf-parse");
-    const { readFileSync } = require("fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfParse = require("pdf-parse/lib/pdf-parse"); // lazy: avoids pdf-parse test-file side-effect on load
     const buffer = readFileSync(filePath);
     const data = await pdfParse(buffer);
     return (data.text as string).trim();
@@ -896,8 +892,8 @@ export function isDailyExhaustion(
 // Lazily require db/campaign to avoid a circular import (matches trackUsage).
 function maybeStopForDailyExhaustion(retryAtMs: number): void {
   try {
-    const { getApiUsageToday, getConfig, getActiveCampaign, updateCampaignStatus } =
-      require("./db");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getApiUsageToday, getConfig, getActiveCampaign, updateCampaignStatus } = require("./db"); // lazy: avoids circular import (db ← resume ← db)
     const model = getActiveModel();
     let usedTokens = 0;
     let dailyLimit = DEFAULT_DAILY_TOKEN_LIMIT;
@@ -908,7 +904,8 @@ function maybeStopForDailyExhaustion(retryAtMs: number): void {
     }
     if (!isDailyExhaustion(retryAtMs, usedTokens, dailyLimit)) return;
 
-    const { stopCampaign } = require("./campaign");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { stopCampaign } = require("./campaign"); // lazy: avoids circular import (campaign ← resume ← campaign)
     stopCampaign();
     const campaign = getActiveCampaign();
     if (campaign) updateCampaignStatus(campaign.id, "stopped", "rate_limited");
@@ -1068,7 +1065,8 @@ async function callLlm(
 
   const callers: Record<ActiveProvider, () => Promise<LlmResult>> = {
     groq: async () => {
-      const Groq = require("groq-sdk");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const Groq = require("groq-sdk"); // lazy: SDK only loaded when groq provider is active
       const client = new Groq({ apiKey });
       const message = await client.chat.completions.create({
         model: model.modelId,
@@ -1080,8 +1078,9 @@ async function callLlm(
       return { text: message.choices[0].message.content, tokens: extractTokenCount("groq", message) };
     },
     anthropic: async () => {
-      const Anthropic =
-        require("@anthropic-ai/sdk").default || require("@anthropic-ai/sdk");
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const anthropicSdk = require("@anthropic-ai/sdk"); // lazy: SDK only loaded when anthropic provider is active
+      const Anthropic = anthropicSdk.default || anthropicSdk;
       const client = new Anthropic({ apiKey });
       const message = await client.messages.create({
         model: model.modelId,
@@ -1157,11 +1156,9 @@ async function writeTailoredDocx(
   outputPath: string,
   header: CandidateHeader
 ): Promise<void> {
-  const {
-    Document, Packer, Paragraph, TextRun, AlignmentType,
-    TabStopPosition, TabStopType,
-  } = require("docx");
-  const { writeFileSync } = require("fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const docxModule = require("docx"); // lazy: docx package only needed at write time, avoids heavy load on import
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, TabStopType } = docxModule;
 
   const FONT = "Calibri";
   const SIZE_NAME = 28;       // 14pt
@@ -1172,6 +1169,7 @@ async function writeTailoredDocx(
   const SIZE_COMPANY = 21;    // 10.5pt
   const RIGHT_TAB = 9500;     // right-aligned tab position in twips
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const children: any[] = [];
 
   // ── Header: Name (if present) ──
@@ -1387,8 +1385,6 @@ export async function tailorResume(
     await readResumeTextAsync(masterResumePath)
   );
 
-  const { mkdirSync, writeFileSync } = require("fs");
-  const { join } = require("path");
   const jobDir = join(RESUMES_DIR, String(jobId));
   mkdirSync(jobDir, { recursive: true });
 

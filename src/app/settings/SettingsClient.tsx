@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   COUNTRIES,
   PROVIDERS,
@@ -117,7 +118,7 @@ export default function SettingsClient({
       <div className="form-card">
         <div className="form-card-toprow">
           <span className="form-card-logo">JobBot</span>
-          <a href="/" className="back-link">← Dashboard</a>
+          <Link href="/" className="back-link">← Dashboard</Link>
         </div>
 
         <h2>Settings</h2>

@@ -12,7 +12,8 @@ export function isLinkedinConnected(): boolean {
   const cookiesPath = join(getProfilePath(), "Default", "Cookies");
   if (!existsSync(cookiesPath)) return false;
   try {
-    const Database = require("better-sqlite3");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require("better-sqlite3"); // lazy: avoids loading native module unless cookies file exists
     const db = new Database(cookiesPath, { readonly: true, fileMustExist: true });
     try {
       const row = db
