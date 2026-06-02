@@ -405,3 +405,15 @@ export function getApiUsageToday(): ApiUsageToday {
   }
   return { counts, tokensByModel };
 }
+
+// Aggregate today's usage across every model. The dashboard gauge shows total
+// daily spend, since fit scoring runs on the fast model while tailoring runs on
+// the flagship — reporting a single model would leave the gauge stuck at 0.
+export function getApiUsageTotalsToday(): { tokens: number; calls: number } {
+  const usage = getApiUsageToday();
+  let tokens = 0;
+  let calls = 0;
+  for (const t of Object.values(usage.tokensByModel)) tokens += t;
+  for (const c of Object.values(usage.counts)) calls += c;
+  return { tokens, calls };
+}
