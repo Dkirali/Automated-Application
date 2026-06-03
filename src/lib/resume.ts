@@ -784,7 +784,12 @@ export function validateTailoredResume(
   facts: MasterResumeFacts
 ): { ok: true } | { ok: false; errors: string[] } {
   const errors: string[] = [];
-  const textLower = output.toLowerCase();
+  // Compare on a normalized form: dashes unified (the output is dash-normalized
+  // but LLM-extracted facts use plain hyphens) and whitespace collapsed, so
+  // cosmetic differences don't read as date/company mismatches.
+  const norm = (s: string) =>
+    normalizeDashes(s).toLowerCase().replace(/\s+/g, " ").trim();
+  const textNorm = norm(output);
 
   // 1. No REFERENCES section
   if (/^\s*REFERENCES?\s*$/im.test(output)) {
@@ -794,7 +799,7 @@ export function validateTailoredResume(
   // 2. All companies from main + additional roles present
   const allRoles = [...facts.roles, ...facts.additionalRoles];
   for (const r of allRoles) {
-    if (!textLower.includes(r.company.toLowerCase())) {
+    if (!textNorm.includes(norm(r.company))) {
       errors.push(`Missing company: ${r.company}`);
     }
   }
@@ -802,11 +807,12 @@ export function validateTailoredResume(
   // 3. Dates appear on same line as their company (guards against swaps)
   const lines = output.split("\n");
   for (const r of allRoles) {
-    const companyLower = r.company.toLowerCase();
-    const datesLower = r.dates.toLowerCase();
+    const companyN = norm(r.company);
+    const datesN = norm(r.dates);
+    if (!datesN) continue; // no date to verify
     const hit = lines.some((l) => {
-      const ll = l.toLowerCase();
-      return ll.includes(companyLower) && ll.includes(datesLower);
+      const ll = norm(l);
+      return ll.includes(companyN) && ll.includes(datesN);
     });
     if (!hit) {
       errors.push(
@@ -817,14 +823,14 @@ export function validateTailoredResume(
 
   // 4. Education schools present
   for (const e of facts.education) {
-    if (!textLower.includes(e.school.toLowerCase())) {
+    if (!textNorm.includes(norm(e.school))) {
       errors.push(`Missing school: ${e.school}`);
     }
   }
 
   // 5. Languages present
   for (const lang of facts.languages) {
-    if (!textLower.includes(lang.toLowerCase())) {
+    if (!textNorm.includes(norm(lang))) {
       errors.push(`Missing language: ${lang}`);
     }
   }
