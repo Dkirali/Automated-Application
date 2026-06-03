@@ -1,7 +1,7 @@
 import { readFileSync, mkdirSync, writeFileSync, statSync } from "fs";
 import { resolve, join } from "path";
 import mammoth from "mammoth";
-import { getConfig } from "./db";
+import { getConfig, setConfig } from "./db";
 import {
   blendFitScore,
   calculateHardReqScore,
@@ -209,6 +209,39 @@ Rules:
 - Hard requirements are concrete, checkable constraints (years of experience, degrees, certifications, language fluency, work authorization, location). Soft preferences go in preferred_keywords instead.
 - Set met=true ONLY when the resume provides clear evidence. When in doubt set met=false.
 - Output ONLY the JSON object. No \`\`\` fences, no surrounding text.`;
+
+// Batch variant: ONE resume + MANY job postings in a single call. The resume
+// and instructions are sent once instead of once-per-job, which is the only
+// lever that meaningfully increases throughput under Groq's fixed per-minute
+// and daily token caps (more concurrency just hits the same ceiling faster).
+const COMBINED_FIT_BATCH_PROMPT = `You are an ATS analyst and senior recruiter. You will receive ONE candidate resume and MULTIPLE job postings. For EACH job posting, analyze the fit and output a strict JSON array — no preamble, no markdown, no commentary.
+
+Candidate Resume:
+{resume_text}
+
+Job Postings (each is preceded by a "Job [n]:" marker):
+{jobs_block}
+
+Output schema (return EXACTLY a JSON array with one object per job, same order):
+[
+  {
+    "index": number,                      // the [n] of the job this object scores
+    "required_keywords": [string, ...],
+    "preferred_keywords": [string, ...],
+    "hard_requirements": [ { "text": string, "met": boolean, "evidence": string } ],
+    "jd_summary": string,
+    "strengths": [string, ...],
+    "gaps": [string, ...],
+    "verdict": string
+  }
+]
+
+Rules:
+- Return EXACTLY one object per job; its "index" MUST match the job's "Job [n]" marker.
+- 5-12 keywords total per list. Pull from the JD verbatim where possible — they are matched against the resume by ATS-style substring.
+- Hard requirements are concrete, checkable constraints (years of experience, degrees, certifications, language fluency, work authorization, location). Soft preferences go in preferred_keywords instead.
+- Set met=true ONLY when the resume provides clear evidence. When in doubt set met=false.
+- Output ONLY the JSON array. No \`\`\` fences, no surrounding text.`;
 
 const RATIONALE_PROMPT = `You are a senior recruiter writing a short opinion on a candidate's fit for a role. The numeric scoring is already done elsewhere — your job is the human-readable take.
 
@@ -1000,7 +1033,41 @@ async function reserveTokenBudget(
   }
 }
 
+// Config keys that persist the active rate-limit back-off across restarts.
+// Groq's daily quota resets on a rolling 24h window from when the limit was
+// hit, so the reset timestamp must outlive the in-memory module state.
+const RATE_LIMIT_RESET_KEY = "rate_limit_reset_at";
+const RATE_LIMIT_MSG_KEY = "rate_limit_msg";
+
+function persistRateLimit(retryAtMs: number, message: string): void {
+  try {
+    setConfig(RATE_LIMIT_RESET_KEY, String(retryAtMs));
+    setConfig(RATE_LIMIT_MSG_KEY, message);
+  } catch {
+    // Persistence is best-effort; never mask the original rate-limit handling.
+  }
+}
+
+function readPersistedRateLimit(): { retryAt: number; message: string } | null {
+  try {
+    const retryAt = Number(getConfig(RATE_LIMIT_RESET_KEY));
+    if (!retryAt || Number.isNaN(retryAt)) return null;
+    return { retryAt, message: getConfig(RATE_LIMIT_MSG_KEY) ?? "" };
+  } catch {
+    return null;
+  }
+}
+
 export function getRateLimitState(): { rateLimited: boolean; retryAt: number; message: string } {
+  // Rehydrate from DB when the in-memory back-off has lapsed (e.g. after a
+  // server restart): a persisted reset still in the future means we're limited.
+  if (Date.now() >= (llmG.__jobbot_rate_limit_until ?? 0)) {
+    const persisted = readPersistedRateLimit();
+    if (persisted && persisted.retryAt > Date.now()) {
+      llmG.__jobbot_rate_limit_until = persisted.retryAt;
+      llmG.__jobbot_rate_limit_msg = persisted.message;
+    }
+  }
   return {
     rateLimited: Date.now() < llmG.__jobbot_rate_limit_until,
     retryAt: llmG.__jobbot_rate_limit_until,
@@ -1057,6 +1124,7 @@ function setRateLimited(retryAtMs: number, message: string): void {
   if (retryAtMs > llmG.__jobbot_rate_limit_until) {
     llmG.__jobbot_rate_limit_until = retryAtMs;
     llmG.__jobbot_rate_limit_msg = message;
+    persistRateLimit(retryAtMs, message);
   }
   maybeStopForDailyExhaustion(retryAtMs);
 }
@@ -1067,6 +1135,7 @@ function setRateLimited(retryAtMs: number, message: string): void {
 export function clearRateLimit(): void {
   llmG.__jobbot_rate_limit_until = 0;
   llmG.__jobbot_rate_limit_msg = "";
+  persistRateLimit(0, "");
 }
 
 // Groq's 429 body looks like:
@@ -1132,6 +1201,10 @@ async function callProvider(
         }
         // Long wait OR couldn't parse — register and bail out fast.
         const retryAt = Date.now() + (waitMs ?? 60_000);
+        // Structured 429 log so the reset time is auditable from the logs.
+        console.error(
+          `[LLM][429] ${name} rate-limited — retryAfterMs=${waitMs ?? "unknown"} resetAt=${new Date(retryAt).toISOString()} :: ${errStr.slice(0, 200)}`
+        );
         setRateLimited(retryAt, errStr.slice(0, 200));
         throw new RateLimitError(retryAt, errStr.slice(0, 200));
       }
@@ -1617,6 +1690,21 @@ function extractJsonObject(text: string): unknown | null {
   }
 }
 
+// Like extractJsonObject but for the top-level array returned by the batch
+// fit prompt. Tolerates code fences and surrounding prose.
+function extractJsonArray(text: string): unknown[] | null {
+  const cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+  const start = cleaned.indexOf("[");
+  const end = cleaned.lastIndexOf("]");
+  if (start === -1 || end === -1 || end < start) return null;
+  try {
+    const parsed = JSON.parse(cleaned.slice(start, end + 1));
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function toStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -1788,6 +1876,62 @@ export async function analyzeFit(
   const raw = await callLlm(prompt, 1400, undefined, getFastModel() ?? undefined);
   const parsed = (extractJsonObject(raw) as Record<string, unknown> | null) ?? {};
   return buildFitResult(parsed, resumeText);
+}
+
+// Batched fresh-scrape fit analysis: scores N jobs against the resume in ONE
+// LLM call. Returns one result per input job (same order); an entry is null
+// when the model omitted/garbled that job, so the caller can leave it unscored
+// for retry-fit rather than persisting a bogus score. A single malformed entry
+// never poisons the rest of the batch.
+export async function analyzeFitBatch(
+  jobs: { jobDescription: string }[],
+  masterResumePath: string
+): Promise<({ scores: FitScores; rationale: FitRationale } | null)[]> {
+  if (jobs.length === 0) return [];
+  const resumeText = await readResumeTextAsync(masterResumePath);
+  const jobsBlock = jobs
+    .map((j, i) => `Job [${i}]:\n${(j.jobDescription || "").slice(0, 2500)}`)
+    .join("\n\n");
+  const prompt = COMBINED_FIT_BATCH_PROMPT
+    .replace("{resume_text}", resumeText.slice(0, 3000))
+    .replace("{jobs_block}", jobsBlock);
+  // Scale the output budget with batch size, capped to keep one call sane.
+  const maxTokens = Math.min(4096, 700 * jobs.length);
+  const raw = await callLlm(prompt, maxTokens, undefined, getFastModel() ?? undefined);
+  return mapBatchFitResponse(raw, jobs.length, resumeText);
+}
+
+// Pure: turn the batch prompt's raw JSON-array response into one result per
+// job. Extracted (like buildFitResult) so the fragile array parsing is
+// unit-testable without an LLM call. Results are indexed by the model-declared
+// "index" so a reordered or partial response still maps to the right job; a
+// missing/garbled entry yields null (caller leaves it for retry-fit) and never
+// poisons the rest of the batch.
+export function mapBatchFitResponse(
+  raw: string,
+  count: number,
+  resumeText: string
+): ({ scores: FitScores; rationale: FitRationale } | null)[] {
+  const arr = extractJsonArray(raw);
+  const byIndex = new Map<number, Record<string, unknown>>();
+  if (arr) {
+    arr.forEach((item, pos) => {
+      if (item && typeof item === "object") {
+        const obj = item as Record<string, unknown>;
+        const idx = typeof obj.index === "number" ? obj.index : pos;
+        byIndex.set(idx, obj);
+      }
+    });
+  }
+  return Array.from({ length: count }, (_, i) => {
+    const parsed = byIndex.get(i);
+    if (!parsed) return null;
+    try {
+      return buildFitResult(parsed, resumeText);
+    } catch {
+      return null;
+    }
+  });
 }
 
 // Stage B — slower: rationale text only. Resolves in another ~2-3 s.

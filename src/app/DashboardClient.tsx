@@ -17,10 +17,22 @@ interface UsageState {
   warn: boolean;
   rateLimited: boolean;
   retryAt: number;
+  resetAt?: number;
+  error?: boolean;
+}
+
+// "in 3h 12m" / "in 4m" — coarse countdown to the daily-quota reset.
+function formatResetIn(target: number, now: number): string {
+  const ms = target - now;
+  if (ms <= 0) return "soon";
+  const mins = Math.round(ms / 60_000);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
 }
 
 interface DashboardProps {
-  stats: { applied: number; manual: number; status: string };
+  stats: { applied: number; manual: number; easy: number; status: string };
   linkedinConnected: boolean;
   resumeName: string | null | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -307,6 +319,13 @@ export default function DashboardClient({
           </div>
         </div>
         <div className="stat-card">
+          <div className="stat-icon easy">⚡</div>
+          <div className="stat-body">
+            <StatNumber target={stats.easy} />
+            <div className="stat-label">Easy Apply</div>
+          </div>
+        </div>
+        <div className="stat-card">
           <div className="stat-icon manual">⚠</div>
           <div className="stat-body">
             <StatNumber target={stats.manual} />
@@ -340,8 +359,9 @@ export default function DashboardClient({
           </div>
           {usage.rateLimited && usage.retryAt > Date.now() && (
             <p className="limit-gauge-note">
-              ⚠ Rate-limited — runs auto-stopped. Resets ~
-              {new Date(usage.retryAt).toLocaleTimeString()}.
+              ⚠ Rate-limited — runs auto-stopped. Resets{" "}
+              {formatResetIn(usage.retryAt, Date.now())} (~
+              {new Date(usage.retryAt).toLocaleTimeString()}).
             </p>
           )}
           {typeof window !== "undefined" &&
@@ -388,10 +408,21 @@ export default function DashboardClient({
             <div className="filter-group">
               <div className="filter-label">Experience Level</div>
               <div className="chip-group">
-                {[{ id: "el1", val: "1", label: "Internship" }, { id: "el2", val: "2", label: "Entry" }, { id: "el3", val: "3", label: "Associate" }, { id: "el4", val: "4", label: "Mid-Senior", checked: true }, { id: "el5", val: "5", label: "Director" }, { id: "el6", val: "6", label: "Executive" }].map((el) => (
+                {[{ id: "el1", val: "1", label: "Internship" }, { id: "el2", val: "2", label: "Entry" }, { id: "el3", val: "3", label: "Associate" }, { id: "el4", val: "4", label: "Mid-Senior", checked: true }, { id: "el7", val: "5", label: "Senior Manager" }, { id: "el5", val: "5", label: "Director" }, { id: "el6", val: "6", label: "Executive" }].map((el) => (
                   <span key={el.id}>
                     <input type="checkbox" id={el.id} name="exp_level" value={el.val} defaultChecked={el.checked} disabled={isRunning} />
                     <label htmlFor={el.id}>{el.label}</label>
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="filter-group">
+              <div className="filter-label">Employment Type</div>
+              <div className="chip-group">
+                {[{ id: "jt1", val: "F", label: "Full-time", checked: true }, { id: "jt2", val: "P", label: "Part-time" }, { id: "jt3", val: "C", label: "Contract" }, { id: "jt4", val: "I", label: "Internship" }, { id: "jt5", val: "V", label: "Volunteer" }].map((jt) => (
+                  <span key={jt.id}>
+                    <input type="checkbox" id={jt.id} name="job_type" value={jt.val} defaultChecked={jt.checked} disabled={isRunning} />
+                    <label htmlFor={jt.id}>{jt.label}</label>
                   </span>
                 ))}
               </div>
@@ -602,6 +633,19 @@ export default function DashboardClient({
                 <span className={`badge badge-${app.status}`}>
                   {app.status === "applied" ? "✓ Applied" : app.status === "failed" ? "✗ Failed" : app.status}
                 </span>
+                {app.status === "failed" && (
+                  <button
+                    type="button"
+                    className="retry-btn"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      fetch(`/api/retry-apply/${app.id}`, { method: "POST" }).then(() => location.reload());
+                    }}
+                  >
+                    ↻ Retry
+                  </button>
+                )}
               </div>
             </a>
           );

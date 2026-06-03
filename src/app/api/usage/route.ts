@@ -9,8 +9,13 @@ export async function GET() {
     // Aggregate across all models: fit scoring spends on the fast model while
     // tailoring spends on the flagship, so a single-model gauge would read 0.
     const { tokens, calls } = getApiUsageTotalsToday();
+    // An explicit 0 disables the cap; only fall back to the default when the
+    // value is genuinely unset (null/empty), not when the user typed 0.
+    const configured = getConfig("daily_token_limit");
     const dailyLimit =
-      Number(getConfig("daily_token_limit")) || DEFAULT_DAILY_TOKEN_LIMIT;
+      configured !== null && configured !== ""
+        ? Number(configured)
+        : DEFAULT_DAILY_TOKEN_LIMIT;
     const pct = dailyLimit > 0 ? tokens / dailyLimit : 0;
     const rl = getRateLimitState();
     return NextResponse.json({
@@ -22,8 +27,14 @@ export async function GET() {
       warn: pct >= WARN_THRESHOLD,
       rateLimited: rl.rateLimited,
       retryAt: rl.retryAt,
+      // resetAt mirrors retryAt for the daily window; persisted in DB so it
+      // survives a server restart (Groq's rolling 24h reset).
+      resetAt: rl.retryAt,
+      error: false,
     });
   } catch {
+    // Surface error:true so an all-zeros payload from a real DB fault is no
+    // longer indistinguishable from a genuinely empty usage day.
     return NextResponse.json({
       model: "",
       tokens: 0,
@@ -33,6 +44,8 @@ export async function GET() {
       warn: false,
       rateLimited: false,
       retryAt: 0,
+      resetAt: 0,
+      error: true,
     });
   }
 }

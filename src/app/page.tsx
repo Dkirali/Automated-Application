@@ -27,6 +27,7 @@ export default function Dashboard() {
   const stats = {
     applied: applications.filter((a) => a.status === "applied").length,
     manual: pending.filter((p) => !p.easy_apply).length,
+    easy: pending.filter((p) => p.easy_apply).length,
     status: campaign?.status || "idle",
   };
 

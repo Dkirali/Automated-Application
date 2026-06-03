@@ -125,6 +125,20 @@ export default function DetailClient({ application }: DetailClientProps) {
           </div>
           <p className="review-meta">{application.company}{application.location ? ` · ${application.location}` : ""}</p>
           {application.url && <a href={application.url} target="_blank" rel="noopener noreferrer" className="review-link">View on LinkedIn ↗</a>}
+          {application.status === "failed" && (
+            <div className="alert alert-warning" style={{ marginTop: "10px" }}>
+              ✗ This application failed.{" "}
+              <button
+                type="button"
+                className="retry-btn"
+                onClick={() =>
+                  fetch(`/api/retry-apply/${application.id}`, { method: "POST" }).then(() => location.reload())
+                }
+              >
+                ↻ Retry
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="ats-comparison">
