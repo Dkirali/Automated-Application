@@ -12,6 +12,7 @@ export async function POST(request: NextRequest) {
   const locationText = (formData.get("location_text") as string)?.trim() || "";
   const workTypes = formData.getAll("work_type") as string[];
   const experienceLevels = formData.getAll("exp_level") as string[];
+  const jobTypes = formData.getAll("job_type") as string[];
   const datePosted = (formData.get("date_posted") as string) || "";
 
   const titles = titlesRaw
@@ -28,6 +29,7 @@ export async function POST(request: NextRequest) {
     location_text: locationText,
     work_types: workTypes,
     experience_levels: experienceLevels,
+    job_types: jobTypes,
     date_posted: datePosted,
   };
 

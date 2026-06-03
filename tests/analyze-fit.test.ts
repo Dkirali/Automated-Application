@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildFitResult } from "@/lib/resume";
+import { buildFitResult, mapBatchFitResponse } from "@/lib/resume";
 
 const resume = `Jane Doe
 jane@example.com
@@ -52,5 +52,64 @@ describe("buildFitResult (merged fit parsing)", () => {
     expect(rationale.verdict).toBe("");
     // Parseability is computed from the resume itself, so it survives.
     expect(scores.parseabilityScore).toBeGreaterThan(0);
+  });
+});
+
+describe("mapBatchFitResponse (batch fit parsing)", () => {
+  const batchRaw = JSON.stringify([
+    {
+      index: 0,
+      required_keywords: ["TypeScript", "Node.js"],
+      preferred_keywords: ["React"],
+      hard_requirements: [],
+      jd_summary: "Backend role.",
+      strengths: ["TypeScript"],
+      gaps: [],
+      verdict: "Apply.",
+    },
+    {
+      index: 1,
+      required_keywords: ["Python"],
+      preferred_keywords: [],
+      hard_requirements: [],
+      jd_summary: "Data role.",
+      strengths: [],
+      gaps: ["Python"],
+      verdict: "Maybe.",
+    },
+  ]);
+
+  it("maps each array element to its job by declared index", () => {
+    const results = mapBatchFitResponse(batchRaw, 2, resume);
+    expect(results).toHaveLength(2);
+    expect(results[0]?.scores.requirements.required_keywords).toEqual(["TypeScript", "Node.js"]);
+    expect(results[0]?.rationale.verdict).toBe("Apply.");
+    expect(results[1]?.scores.requirements.required_keywords).toEqual(["Python"]);
+    expect(results[1]?.rationale.jdSummary).toBe("Data role.");
+  });
+
+  it("tolerates code fences and reordered indices", () => {
+    const reordered = "```json\n" + JSON.stringify([
+      { index: 1, required_keywords: ["Python"], jd_summary: "Data role." },
+      { index: 0, required_keywords: ["TypeScript"], jd_summary: "Backend role." },
+    ]) + "\n```";
+    const results = mapBatchFitResponse(reordered, 2, resume);
+    expect(results[0]?.scores.requirements.required_keywords).toEqual(["TypeScript"]);
+    expect(results[1]?.scores.requirements.required_keywords).toEqual(["Python"]);
+  });
+
+  it("a missing entry degrades to null without poisoning the others", () => {
+    // Only job 0 came back; job 1 is omitted entirely.
+    const partial = JSON.stringify([
+      { index: 0, required_keywords: ["TypeScript"], jd_summary: "Backend role.", verdict: "Apply." },
+    ]);
+    const results = mapBatchFitResponse(partial, 2, resume);
+    expect(results[0]?.rationale.verdict).toBe("Apply.");
+    expect(results[1]).toBeNull();
+  });
+
+  it("returns all-null when the response isn't a parseable array", () => {
+    const results = mapBatchFitResponse("the model said no", 3, resume);
+    expect(results).toEqual([null, null, null]);
   });
 });

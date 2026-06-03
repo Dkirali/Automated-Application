@@ -230,6 +230,7 @@ export interface SearchFilters {
   location_text?: string;
   work_types?: string[];
   experience_levels?: string[];
+  job_types?: string[];
   date_posted?: string;
 }
 
@@ -243,6 +244,7 @@ export function buildSearchUrl(
   if (filters.location_text) params.set("location", filters.location_text);
   if (filters.work_types?.length) params.set("f_WT", filters.work_types.join(","));
   if (filters.experience_levels?.length) params.set("f_E", filters.experience_levels.join(","));
+  if (filters.job_types?.length) params.set("f_JT", filters.job_types.join(","));
   if (filters.date_posted) params.set("f_TPR", filters.date_posted);
   if (start > 0) params.set("start", String(start));
   return `${LINKEDIN_JOBS_URL}?${params.toString()}`;
