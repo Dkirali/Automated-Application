@@ -84,3 +84,51 @@ a:hover {
   scrollbar-width: thin;
   scrollbar-color: var(--color-line) transparent;
 }
+
+/* ─── Rendered resume content (injected via dangerouslySetInnerHTML) ───────── */
+.resume-rendered {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text);
+}
+.resume-rendered .resume-name {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.resume-rendered .resume-section {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-muted);
+  margin: 14px 0 4px;
+}
+.resume-rendered .resume-summary {
+  font-style: italic;
+  color: var(--color-muted);
+}
+.resume-rendered .resume-bullet {
+  padding-left: 14px;
+  position: relative;
+}
+.resume-rendered .resume-bullet::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--color-accent);
+}
+.resume-rendered .resume-line {
+  margin: 2px 0;
+}
+.resume-rendered .resume-spacer {
+  height: 8px;
+}
+.resume-rendered mark.kw-highlight,
+mark.kw-highlight {
+  background: var(--color-highlight);
+  color: var(--color-text);
+  padding: 0 2px;
+  border-radius: 3px;
+}
