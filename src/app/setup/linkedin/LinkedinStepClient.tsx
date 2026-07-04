@@ -2,6 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import {
+  Button,
+  OnboardingAside,
+  SplitScreenLayout,
+  StepIndicator,
+} from "@/components/ui";
+import { cn } from "@/lib/cn";
 
 interface Props {
   initialConnected: boolean;
@@ -34,68 +41,78 @@ export default function LinkedinStepClient({ initialConnected }: Props) {
     }
   };
 
+  const statusLabel = connected
+    ? "LinkedIn connected"
+    : waiting
+      ? "Log in in the Chrome window, then close it…"
+      : "Not connected yet";
+
   return (
-    <div className="page-center">
-      <div className="form-card">
-        <span className="form-card-logo">JobBot</span>
-        <h2>Connect LinkedIn</h2>
-        <p className="form-card-sub">
-          JobBot uses your LinkedIn session to find and apply to jobs. We open a real Chrome window and you log in
-          yourself — your password never leaves your machine.
-        </p>
+    <SplitScreenLayout left={<OnboardingAside />}>
+      <StepIndicator total={2} current={2} className="mb-6" />
 
-        <div className="steps">
-          <div className="step-dot done" />
-          <div className="step-dot active" />
-        </div>
+      <h2 className="font-serif text-[28px] font-semibold text-ink">
+        Connect LinkedIn
+      </h2>
+      <p className="mt-1 mb-6 text-[14px] leading-[1.5] text-muted">
+        JobBot uses your LinkedIn session to find and apply to jobs. We open a
+        real Chrome window and you log in yourself — your password never leaves
+        your machine.
+      </p>
 
-        <div className="linkedin-card">
-          <div className="linkedin-card-row">
-            <span
-              className={`li-pill ${connected ? "li-pill--on" : "li-pill--off"}`}
-              aria-live="polite"
-            >
-              <span className="li-pill-dot" />
-              <span>
-                {connected
-                  ? "LinkedIn connected"
-                  : waiting
-                    ? "Log in in the Chrome window, then close it…"
-                    : "Not connected yet"}
-              </span>
-            </span>
-          </div>
-
-          {error && !connected && (
-            <p className="li-error" role="alert">
-              {error}
-            </p>
+      <div className="flex flex-col gap-4 rounded-card border border-line bg-card p-6">
+        <span
+          className={cn(
+            "inline-flex items-center gap-2 self-start rounded-full px-3 py-1.5 text-[13px] font-semibold",
+            connected ? "bg-badge-green text-green" : "bg-input text-muted",
           )}
+          aria-live="polite"
+        >
+          <span
+            className={cn(
+              "h-2 w-2 rounded-full",
+              connected ? "bg-green-strong" : "bg-faint",
+            )}
+          />
+          <span>{statusLabel}</span>
+        </span>
 
-          {!connected && (
-            <button
-              type="button"
-              className="btn btn-primary btn-full"
-              onClick={startConnect}
-              disabled={waiting}
-            >
-              {waiting ? "Waiting for login…" : "Connect LinkedIn"}
-            </button>
-          )}
+        {error && !connected && (
+          <p className="text-[12.5px] text-accent-strong" role="alert">
+            {error}
+          </p>
+        )}
 
-          {connected && (
-            <Link href="/" className="btn btn-primary btn-full">
-              Go to dashboard →
-            </Link>
-          )}
+        {!connected && (
+          <Button
+            type="button"
+            variant="accent"
+            className="w-full py-3.5"
+            onClick={startConnect}
+            disabled={waiting}
+          >
+            {waiting ? "Waiting for login…" : "Connect LinkedIn"}
+          </Button>
+        )}
 
-          {!connected && (
-            <Link href="/" className="form-skip-link">
-              Skip for now — I&apos;ll connect later from Settings
-            </Link>
-          )}
-        </div>
+        {connected && (
+          <Link
+            href="/"
+            className="inline-flex w-full items-center justify-center rounded-btn bg-accent py-3.5 text-[13px] font-bold text-white hover:bg-accent/90 hover:no-underline"
+          >
+            Go to dashboard →
+          </Link>
+        )}
+
+        {!connected && (
+          <Link
+            href="/"
+            className="text-center text-[12.5px] font-semibold text-muted hover:text-ink hover:no-underline"
+          >
+            Skip for now — I&apos;ll connect later from Settings
+          </Link>
+        )}
       </div>
-    </div>
+    </SplitScreenLayout>
   );
 }

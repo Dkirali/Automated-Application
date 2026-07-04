@@ -23,12 +23,15 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
+    "@tailwindcss/postcss": "^4.3.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "playwright": "^1.59.1",
+    "postcss": "^8.5.16",
+    "tailwindcss": "^4.3.2",
     "tsx": "^4.22.4",
     "typescript": "^5",
     "vitest": "^4.1.4"

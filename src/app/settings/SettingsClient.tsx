@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import {
   COUNTRIES,
   PROVIDERS,
@@ -11,6 +10,15 @@ import {
   type ProviderInfo,
 } from "@/lib/setup-helpers";
 import type { ActiveProvider } from "@/lib/resume";
+import {
+  Button,
+  Card,
+  Field,
+  SectionTitle,
+  SelectField,
+  TopNav,
+} from "@/components/ui";
+import { cn } from "@/lib/cn";
 
 const FALLBACK_COUNTRY_CODE = "US";
 
@@ -118,191 +126,240 @@ export default function SettingsClient({
   const existingMaskedKey = configuredKeys[providerId];
 
   return (
-    <div className="page-center">
-      <div className="form-card">
-        <div className="form-card-toprow">
-          <span className="form-card-logo">JobBot</span>
-          <Link href="/" className="back-link">← Dashboard</Link>
-        </div>
+    <div className="min-h-screen bg-cream pb-16">
+      <TopNav backLabel="Back to dashboard" />
 
-        <h2>Settings</h2>
-        <p className="form-card-sub">Update your profile, swap providers, or upload a new master resume.</p>
+      <main className="mx-auto max-w-[760px] px-6 py-9 md:px-10">
+        <h1 className="font-serif text-[28px] font-semibold text-ink">Settings</h1>
+        <p className="mb-6 mt-1 text-[14px] text-muted">
+          Update your profile, swap providers, or upload a new master resume.
+        </p>
 
-        <div className="settings-section">
-          <div className="settings-section-title">LinkedIn</div>
-          <div className="linkedin-card-row">
+        {/* Connections (LinkedIn) — async, lives outside the settings form */}
+        <Card className="mb-[18px]">
+          <SectionTitle as="label" className="mb-4">
+            Connections
+          </SectionTitle>
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <span
-              className={`li-pill ${linkedinConnected ? "li-pill--on" : "li-pill--off"}`}
+              className={cn(
+                "inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] font-semibold",
+                linkedinConnected ? "bg-badge-green text-green" : "bg-input text-muted",
+              )}
               aria-live="polite"
             >
-              <span className="li-pill-dot" />
+              <span
+                className={cn(
+                  "h-2 w-2 rounded-full",
+                  linkedinConnected ? "bg-green-strong" : "bg-faint",
+                )}
+              />
               <span>
                 {linkedinConnected
-                  ? "Connected"
+                  ? "LinkedIn connected"
                   : linkedinBusy === "connecting"
                     ? "Log in in the Chrome window, then close it…"
-                    : "Not connected"}
+                    : "LinkedIn not connected"}
               </span>
             </span>
             {linkedinConnected ? (
-              <button
+              <Button
                 type="button"
-                className="btn btn-secondary"
+                variant="outline"
+                size="sm"
                 onClick={disconnectLinkedin}
                 disabled={linkedinBusy !== null}
               >
                 {linkedinBusy === "disconnecting" ? "Disconnecting…" : "Disconnect"}
-              </button>
+              </Button>
             ) : (
-              <button
+              <Button
                 type="button"
-                className="btn btn-primary"
+                variant="accent"
+                size="sm"
                 onClick={connectLinkedin}
                 disabled={linkedinBusy !== null}
               >
                 {linkedinBusy === "connecting" ? "Waiting for login…" : "Connect"}
-              </button>
+              </Button>
             )}
           </div>
-        </div>
+        </Card>
 
-        <form method="POST" action="/api/settings" encType="multipart/form-data" className="setup-form">
-          <div className="form-group">
-            <label htmlFor="name">Full Name</label>
-            <input type="text" id="name" name="name" defaultValue={name} required />
-          </div>
+        <form method="POST" action="/api/settings" encType="multipart/form-data">
+          {/* Profile */}
+          <Card className="mb-[18px]">
+            <SectionTitle as="label" className="mb-4">
+              Profile
+            </SectionTitle>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Field id="name" name="name" label="Full name" defaultValue={name} required />
+              <Field id="email" name="email" type="email" label="Email" defaultValue={email} required />
+            </div>
 
-          <div className="form-group">
-            <label htmlFor="email">Email</label>
-            <input type="email" id="email" name="email" defaultValue={email} required />
-          </div>
+            <div className="mt-4 flex flex-col gap-1.5">
+              <span className="text-[13px] font-semibold text-ink">Phone</span>
+              <div className="grid grid-cols-[minmax(0,150px)_1fr] gap-2">
+                <SelectField
+                  aria-label="Country dial code"
+                  value={countryCode}
+                  onChange={(e) => setCountryCode(e.target.value)}
+                >
+                  {COUNTRIES.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.flag} {c.dialCode} · {c.name}
+                    </option>
+                  ))}
+                </SelectField>
+                <Field
+                  type="tel"
+                  id="phone-number"
+                  inputMode="numeric"
+                  placeholder="555 000 0000"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  required
+                />
+              </div>
+              <input type="hidden" name="phone" value={phoneSubmitValue} />
+            </div>
 
-          <div className="form-group">
-            <label htmlFor="phone-number">Phone</label>
-            <div className="phone-row">
-              <select
-                className="phone-country"
-                aria-label="Country dial code"
-                value={countryCode}
-                onChange={(e) => setCountryCode(e.target.value)}
-              >
-                {COUNTRIES.map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.flag} {c.dialCode} · {c.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="tel"
-                id="phone-number"
-                className="phone-number"
-                inputMode="numeric"
-                placeholder="555 000 0000"
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value)}
-                required
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Field
+                id="linkedin"
+                name="linkedin"
+                label={
+                  <>
+                    LinkedIn{" "}
+                    <span className="font-normal text-muted">(optional)</span>
+                  </>
+                }
+                defaultValue={linkedin}
+                placeholder="linkedin.com/in/your-handle"
+              />
+              <Field
+                id="github"
+                name="github"
+                label={
+                  <>
+                    GitHub{" "}
+                    <span className="font-normal text-muted">(optional)</span>
+                  </>
+                }
+                defaultValue={github}
+                placeholder="github.com/your-handle"
               />
             </div>
-            <input type="hidden" name="phone" value={phoneSubmitValue} />
-          </div>
+          </Card>
 
-          <div className="form-group">
-            <label htmlFor="linkedin">
-              LinkedIn <span className="label-hint">(optional — shown in resume header)</span>
-            </label>
-            <input type="text" id="linkedin" name="linkedin" defaultValue={linkedin} placeholder="linkedin.com/in/your-handle" />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="github">
-              GitHub <span className="label-hint">(optional — shown in resume header)</span>
-            </label>
-            <input type="text" id="github" name="github" defaultValue={github} placeholder="github.com/your-handle" />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="api-key">
-              API Key{" "}
-              <span className="label-hint">
-                (leave blank to keep current — required if switching provider with no existing key)
+          {/* AI provider */}
+          <Card className="mb-[18px]">
+            <SectionTitle as="label" className="mb-4">
+              AI provider &amp; key
+            </SectionTitle>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[13px] font-semibold text-ink">
+                API key{" "}
+                <span className="font-normal text-muted">
+                  (leave blank to keep current)
+                </span>
               </span>
-            </label>
-            <div className="api-key-row">
-              <select
-                className="provider-select"
-                name="active_provider"
-                aria-label="API provider"
-                value={providerId}
-                onChange={(e) => setProviderId(e.target.value as ProviderInfo["id"])}
-              >
-                {PROVIDERS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="password"
-                id="api-key"
-                className="api-key-input"
-                placeholder={existingMaskedKey ? "Paste a new key to replace" : provider.placeholder}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                autoComplete="off"
+              <div className="grid grid-cols-[minmax(0,150px)_1fr] gap-2">
+                <SelectField
+                  name="active_provider"
+                  aria-label="API provider"
+                  value={providerId}
+                  onChange={(e) => setProviderId(e.target.value as ProviderInfo["id"])}
+                >
+                  {PROVIDERS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </SelectField>
+                <Field
+                  type="password"
+                  id="api-key"
+                  placeholder={existingMaskedKey ? "Paste a new key to replace" : provider.placeholder}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+              <input type="hidden" name={provider.fieldName} value={apiKey} />
+              <p className="text-[11.5px] text-muted">
+                {existingMaskedKey ? (
+                  <>
+                    Configured:{" "}
+                    <code className="rounded bg-input px-1 py-0.5 text-[11px] text-ink">
+                      {existingMaskedKey}
+                    </code>
+                    {" · leave blank to keep, paste a new key to replace"}
+                  </>
+                ) : (
+                  <>No {provider.name} key on file. Paste one to enable this provider.</>
+                )}
+              </p>
+              {providerChanged && (
+                <p className="text-[11.5px] text-accent-strong">
+                  Switching active provider from{" "}
+                  <strong>{activeProvider ?? "none"}</strong> to{" "}
+                  <strong>{provider.id}</strong>. Make sure a {provider.id} key is set.
+                </p>
+              )}
+              {providerMismatch && (
+                <p className="text-[11.5px] text-accent-strong">
+                  This key prefix looks like a <strong>{detectedProvider}</strong> key
+                  — but you selected <strong>{provider.name}</strong>. Switch the
+                  provider or check the key.
+                </p>
+              )}
+            </div>
+
+            <div className="mt-4 max-w-xs">
+              <Field
+                type="number"
+                id="daily-token-limit"
+                name="daily_token_limit"
+                label="Daily token limit"
+                min={1}
+                defaultValue={dailyTokenLimit || "100000"}
+                hint="Groq's free tier is ~100,000 tokens/day. The dashboard gauge and auto-stop use this number."
               />
             </div>
-            <input type="hidden" name={provider.fieldName} value={apiKey} />
-            <p className="form-hint">
-              {existingMaskedKey ? (
-                <>
-                  Configured: <code className="masked-key">{existingMaskedKey}</code>
-                  {" · leave blank to keep, paste a new key to replace"}
-                </>
-              ) : (
-                <>No {provider.name} key on file. Paste one to enable this provider.</>
-              )}
-            </p>
-            {providerChanged && (
-              <p className="form-warning">
-                Switching active provider from{" "}
-                <strong>{activeProvider ?? "none"}</strong> to{" "}
-                <strong>{provider.id}</strong>. Make sure a {provider.id} key is set.
-              </p>
-            )}
-            {providerMismatch && (
-              <p className="form-warning">
-                This key prefix looks like a <strong>{detectedProvider}</strong> key — but you selected{" "}
-                <strong>{provider.name}</strong>. Switch the provider or check the key.
-              </p>
-            )}
-          </div>
+          </Card>
 
-          <div className="form-group">
-            <label htmlFor="daily-token-limit">Daily token limit</label>
-            <input
-              type="number"
-              id="daily-token-limit"
-              name="daily_token_limit"
-              min={1}
-              defaultValue={dailyTokenLimit || "100000"}
-            />
-            <p className="form-hint">
-              Groq&apos;s free tier is ~100,000 tokens/day. The dashboard gauge and
-              auto-stop use this number.
-            </p>
-          </div>
-
-          <div className="form-group">
-            <label>Master Resume</label>
+          {/* Master resume */}
+          <Card className="mb-[18px]">
+            <SectionTitle as="label" className="mb-4">
+              Master resume
+            </SectionTitle>
             {currentResume && !fileName && (
-              <div className="file-current">📄 {currentResume}</div>
+              <div className="mb-3 flex items-center gap-3 rounded-xl bg-input p-3">
+                <span
+                  aria-hidden
+                  className="grid h-9 w-9 place-items-center rounded-lg bg-badge-orange text-[17px]"
+                >
+                  📄
+                </span>
+                <span className="truncate text-[14px] font-bold text-ink">
+                  {currentResume}
+                </span>
+              </div>
             )}
-            <div className={`file-drop${fileName ? " file-drop--uploaded" : ""}`}>
+            <label
+              className={
+                fileName
+                  ? "relative flex cursor-pointer flex-col items-center gap-1 rounded-[11px] border-[1.5px] border-green-strong bg-badge-green p-[18px] text-center"
+                  : "relative flex cursor-pointer flex-col items-center gap-1 rounded-[11px] border-[1.5px] border-dashed border-line bg-input p-[18px] text-center hover:border-accent"
+              }
+            >
               <input
                 type="file"
                 name="resume"
                 accept=".docx,.doc,.pdf"
                 id="resume-input"
+                className="absolute inset-0 cursor-pointer opacity-0"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   setFileName(file?.name ?? null);
@@ -311,26 +368,43 @@ export default function SettingsClient({
               />
               {fileName ? (
                 <>
-                  <div className="file-drop-check" aria-hidden>✓</div>
-                  <div className="file-drop-badge">UPLOADED</div>
-                  <div className="file-drop-filename">{fileName}</div>
-                  <div className="file-drop-hint">
+                  <span
+                    aria-hidden
+                    className="grid h-9 w-9 place-items-center rounded-full bg-green-strong text-[19px] font-extrabold text-white"
+                  >
+                    ✓
+                  </span>
+                  <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-green">
+                    Uploaded
+                  </span>
+                  <span className="text-[13.5px] font-bold text-ink">{fileName}</span>
+                  <span className="text-[11.5px] text-muted">
                     {fileSizeLabel ? `${fileSizeLabel} · ` : ""}Click to change
-                  </div>
+                  </span>
                 </>
               ) : (
                 <>
-                  <div className="file-drop-icon">📤</div>
-                  <div className="file-drop-text">Upload a new resume to replace</div>
-                  <div className="file-drop-hint">.docx, .doc, or .pdf accepted</div>
+                  <span aria-hidden className="text-[22px]">
+                    📤
+                  </span>
+                  <span className="text-[13.5px] font-bold text-ink">
+                    Upload a new resume to replace
+                  </span>
+                  <span className="text-[11.5px] text-muted">
+                    .docx, .doc, or .pdf accepted
+                  </span>
                 </>
               )}
-            </div>
-          </div>
+            </label>
+          </Card>
 
-          <button type="submit" className="btn btn-primary btn-full">Save Changes</button>
+          <div className="flex justify-end">
+            <Button type="submit" variant="ink" className="px-7 py-3">
+              Save changes
+            </Button>
+          </div>
         </form>
-      </div>
+      </main>
     </div>
   );
 }

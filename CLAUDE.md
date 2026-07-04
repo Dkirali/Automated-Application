@@ -148,4 +148,4 @@ npx playwright test  # e2e (single worker, isolated tests/e2e/.test.db, page obj
 npm run lint         # eslint
 ```
 
-Design specs/plans for the usage tracker live in `docs/superpowers/`.
+Deployment notes live in `docs/superpowers/plans/server-deployment.md`.

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { Badge, Card, ScoreCompare, TopNav } from "@/components/ui";
 
 interface DetailClientProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,34 +60,29 @@ function highlightKeywords(container: HTMLElement, keywords: string[]): number {
   return matched.size;
 }
 
+function Skeleton() {
+  return (
+    <div className="flex flex-col gap-2">
+      {[55, 80, 70, 65, 90, 50, 75, 60].map((w, i) => (
+        <div
+          key={i}
+          className="h-3 animate-pulse rounded bg-track"
+          style={{ width: `${w}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function DetailClient({ application }: DetailClientProps) {
   const [resumeHtml, setResumeHtml] = useState<string | null>(null);
   const [resumeError, setResumeError] = useState(false);
   const [kwMatchCount, setKwMatchCount] = useState<number | null>(null);
   const resumeRef = useRef<HTMLDivElement>(null);
 
-  const scoreClass = (s: number) => (s >= 70 ? "high" : s >= 40 ? "medium" : "low");
-
   const orig = application.original_ats_score || 0;
   const tail = application.ats_score || 0;
-  const delta = tail - orig;
-  const circ = 125.66;
-  const origDash = Math.max((orig / 100) * circ, 2);
-  const tailDash = Math.max((tail / 100) * circ, 2);
-
-  useEffect(() => {
-    document.querySelectorAll<HTMLElement>(".ats-ring-number[data-target]").forEach((el) => {
-      const target = parseInt(el.dataset.target || "0", 10);
-      const dur = 900;
-      const start = performance.now();
-      function tick(now: number) {
-        const p = Math.min((now - start) / dur, 1);
-        el.textContent = String(Math.round((1 - Math.pow(1 - p, 3)) * target));
-        if (p < 1) requestAnimationFrame(tick);
-      }
-      requestAnimationFrame(tick);
-    });
-  }, []);
+  const hasAts = orig > 0 || tail > 0;
 
   useEffect(() => {
     if (!application.resume_path) return;
@@ -105,135 +101,182 @@ export default function DetailClient({ application }: DetailClientProps) {
   }, [application.id, application.resume_path]);
 
   return (
-    <div className="container">
-      <div className="topbar">
-        <div className="topbar-brand">
-          <Link href="/" className="back-link">← JobBot</Link>
-        </div>
-        <div className="topbar-actions">
-          <a href="/settings" className="icon-link">⚙ Settings</a>
-        </div>
-      </div>
+    <div className="min-h-screen bg-cream pb-16">
+      <TopNav backLabel="Back to dashboard">
+        <Link href="/settings" className="text-cream hover:no-underline hover:opacity-80">
+          Settings
+        </Link>
+      </TopNav>
 
-      <div className="review-header">
-        <div className="review-header-body">
-          <div className="review-header-top">
-            <h1 className="review-title">{application.title}</h1>
-            {application.ats_score > 0 && (
-              <span className={`fit-score-badge fit-score--${scoreClass(application.ats_score)}`}>ATS {application.ats_score}%</span>
-            )}
-          </div>
-          <p className="review-meta">{application.company}{application.location ? ` · ${application.location}` : ""}</p>
-          {application.url && <a href={application.url} target="_blank" rel="noopener noreferrer" className="review-link">View on LinkedIn ↗</a>}
-          {application.status === "failed" && (
-            <div className="alert alert-warning" style={{ marginTop: "10px" }}>
-              ✗ This application failed.{" "}
-              <button
-                type="button"
-                className="retry-btn"
-                onClick={() =>
-                  fetch(`/api/retry-apply/${application.id}`, { method: "POST" }).then(() => location.reload())
-                }
-              >
-                ↻ Retry
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="ats-comparison">
-          <div className="ats-ring-wrap ats-ring-wrap--original">
-            <svg className="ats-ring" viewBox="0 0 48 48" width="72" height="72">
-              <circle className="ats-ring-bg" cx="24" cy="24" r="20" />
-              <circle className={`ats-ring-fill ${scoreClass(orig)}`} cx="24" cy="24" r="20" strokeDasharray={`${origDash} ${circ - origDash}`} strokeDashoffset="31.415" />
-            </svg>
-            <div className="ats-ring-label">
-              <span className="ats-ring-number" data-target={orig}>0</span>
-              <span className="ats-ring-unit">Original</span>
-            </div>
-          </div>
-          <div className="ats-delta">
-            <span className="ats-delta-arrow">→</span>
-            <span className={`ats-delta-value ${delta > 0 ? "positive" : delta < 0 ? "negative" : ""}`}>
-              {delta > 0 ? "+" : ""}{delta}%
-            </span>
-          </div>
-          <div className="ats-ring-wrap ats-ring-wrap--tailored">
-            <svg className="ats-ring" viewBox="0 0 48 48" width="72" height="72">
-              <circle className="ats-ring-bg" cx="24" cy="24" r="20" />
-              <circle className={`ats-ring-fill ${scoreClass(tail)} tailored-fill`} cx="24" cy="24" r="20" strokeDasharray={`${tailDash} ${circ - tailDash}`} strokeDashoffset="31.415" />
-            </svg>
-            <div className="ats-ring-label">
-              <span className="ats-ring-number" data-target={tail}>0</span>
-              <span className="ats-ring-unit">Tailored</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="review-grid">
-        <div className="review-panel">
-          <div className="review-panel-header">
-            <span className="review-panel-title">Job Brief</span>
-          </div>
-          <div className="review-panel-body">
-            {application.jd_summary && (
-              <div className="jd-summary-card">
-                <p className="jd-summary-text">{application.jd_summary}</p>
+      <main className="mx-auto max-w-[1080px] px-6 py-7 md:px-10">
+        {/* Header */}
+        <Card className="mb-4">
+          <div className="flex flex-wrap items-start justify-between gap-6">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="font-serif text-[26px] font-semibold text-ink">
+                  {application.title}
+                </h1>
+                {application.ats_score > 0 && (
+                  <Badge tone={application.ats_score >= 70 ? "green" : "orange"}>
+                    ATS {application.ats_score}%
+                  </Badge>
+                )}
+                <Badge tone={application.status === "applied" ? "green" : application.status === "failed" ? "orange" : "neutral"}>
+                  {application.status === "applied"
+                    ? "✓ Applied"
+                    : application.status === "failed"
+                      ? "✗ Failed"
+                      : application.status}
+                </Badge>
               </div>
-            )}
-            {application.keywords && (
-              <div className="jd-keyword-chips">
-                {application.keywords.split(",").map((kw: string, i: number) => kw.trim() && <span key={i} className="jd-keyword-chip">{kw.trim()}</span>)}
-              </div>
-            )}
-            {application.job_description ? (
-              <details className="jd-full-toggle">
-                <summary>Show full description</summary>
-                <pre className="jd-text">{application.job_description}</pre>
-              </details>
-            ) : !application.jd_summary && (
-              <p className="empty-note">No description available.</p>
-            )}
-          </div>
-        </div>
-
-        <div className="resume-panel">
-          <div className="resume-panel-header">
-            <div className="resume-panel-title">
-              <span className="panel-label">TAILORED RESUME</span>
-              {application.model_used && <span className="model-badge tailored-model-badge">{application.model_used}</span>}
-            </div>
-            <div className="resume-panel-actions">
-              {application.keywords && (
-                <span className="kw-match-badge" title="Keywords matched in resume">
-                  <span>{kwMatchCount ?? "—"}</span>&thinsp;/&thinsp;{application.keywords.split(",").length} kw
-                </span>
+              <p className="mt-1 text-[14px] text-muted">
+                {application.company}
+                {application.location ? ` · ${application.location}` : ""}
+              </p>
+              {application.url && (
+                <a
+                  href={application.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 inline-block text-[13px] font-semibold text-accent"
+                >
+                  View on LinkedIn ↗
+                </a>
               )}
-              {application.resume_path && <a href={`/api/download/${application.id}`} className="btn-download">↓ PDF</a>}
-            </div>
-          </div>
-          <div className="resume-body">
-            {application.resume_path ? (
-              resumeError ? (
-                <p className="empty-note">Could not load resume.</p>
-              ) : resumeHtml ? (
-                <div className="resume-rendered" ref={resumeRef} dangerouslySetInnerHTML={{ __html: resumeHtml }} />
-              ) : (
-                <div>
-                  {[55, 80, 70, 65, 90, 50, 75, 60].map((w, i) => <div key={i} className="skeleton-line" style={{ width: `${w}%` }} />)}
+              {application.status === "failed" && (
+                <div className="mt-3 flex items-center gap-3 rounded-xl border border-danger-line bg-badge-orange px-4 py-3 text-[13px] text-accent-strong">
+                  <span>✗ This application failed.</span>
+                  <button
+                    type="button"
+                    className="rounded-btn border-[1.5px] border-[#e3b5a6] px-3 py-1 text-[12px] font-bold text-accent-strong hover:bg-accent-strong hover:text-white"
+                    onClick={() =>
+                      fetch(`/api/retry-apply/${application.id}`, { method: "POST" }).then(() =>
+                        location.reload(),
+                      )
+                    }
+                  >
+                    ↻ Retry
+                  </button>
                 </div>
-              )
-            ) : (
-              <div className="resume-not-tailored">
-                <div className="resume-not-tailored-icon">◈</div>
-                <div className="resume-not-tailored-msg">No resume generated</div>
-                <div className="resume-not-tailored-hint">This application was submitted without a tailored resume.</div>
+              )}
+            </div>
+            {hasAts && (
+              <div className="shrink-0">
+                <div className="mb-2 text-right text-[10.5px] font-bold uppercase tracking-[0.06em] text-muted">
+                  ATS score
+                </div>
+                <ScoreCompare original={orig} tailored={tail} />
               </div>
             )}
           </div>
+        </Card>
+
+        {/* Two-panel grid */}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* Job brief */}
+          <Card flush className="overflow-hidden">
+            <div className="border-b border-line px-4 py-3 text-[10.5px] font-bold uppercase tracking-[0.08em] text-muted">
+              Job brief
+            </div>
+            <div className="p-4">
+              {application.jd_summary && (
+                <p className="mb-3 text-[13px] leading-[1.55] text-ink">
+                  {application.jd_summary}
+                </p>
+              )}
+              {application.keywords && (
+                <div className="mb-3 flex flex-wrap gap-1.5">
+                  {application.keywords.split(",").map(
+                    (kw: string, i: number) =>
+                      kw.trim() && (
+                        <span
+                          key={i}
+                          className="rounded-md bg-badge-orange px-2 py-1 text-[11.5px] font-semibold text-accent"
+                        >
+                          {kw.trim()}
+                        </span>
+                      ),
+                  )}
+                </div>
+              )}
+              {application.job_description ? (
+                <details className="text-[13px]">
+                  <summary className="cursor-pointer font-semibold text-accent">
+                    Show full description
+                  </summary>
+                  <pre className="mt-2 whitespace-pre-wrap font-sans text-[12.5px] leading-[1.5] text-muted">
+                    {application.job_description}
+                  </pre>
+                </details>
+              ) : (
+                !application.jd_summary && (
+                  <p className="text-[12.5px] italic text-muted">
+                    No description available.
+                  </p>
+                )
+              )}
+            </div>
+          </Card>
+
+          {/* Tailored resume */}
+          <Card flush className="overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[10.5px] font-bold uppercase tracking-[0.08em] text-muted">
+                  Tailored resume
+                </span>
+                {application.model_used && (
+                  <Badge tone="neutral">{application.model_used}</Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {application.keywords && (
+                  <span
+                    className="text-[11.5px] font-semibold text-muted"
+                    title="Keywords matched in resume"
+                  >
+                    {kwMatchCount ?? "—"} / {application.keywords.split(",").length} kw
+                  </span>
+                )}
+                {application.resume_path && (
+                  <a
+                    href={`/api/download/${application.id}`}
+                    className="rounded-btn border-[1.5px] border-line px-2.5 py-1 text-[12px] font-bold text-ink hover:bg-ink hover:text-cream hover:no-underline"
+                  >
+                    ↓ PDF
+                  </a>
+                )}
+              </div>
+            </div>
+            <div className="p-4">
+              {application.resume_path ? (
+                resumeError ? (
+                  <p className="text-[12.5px] italic text-muted">Could not load resume.</p>
+                ) : resumeHtml ? (
+                  <div
+                    className="resume-rendered"
+                    ref={resumeRef}
+                    dangerouslySetInnerHTML={{ __html: resumeHtml }}
+                  />
+                ) : (
+                  <Skeleton />
+                )
+              ) : (
+                <div className="flex flex-col items-center gap-2 py-8 text-center">
+                  <div className="text-[24px]">◈</div>
+                  <div className="text-[14px] font-bold text-ink">
+                    No resume generated
+                  </div>
+                  <div className="max-w-xs text-[12.5px] text-muted">
+                    This application was submitted without a tailored resume.
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
