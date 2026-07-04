@@ -34,9 +34,9 @@ export function TopNav({ href = "/", backLabel, children, className }: TopNavPro
                 aria-hidden
                 className="grid h-6 w-6 place-items-center rounded-md bg-accent text-[13px] font-bold text-white"
               >
-                F
+                J
               </span>
-              <span className="font-serif text-[21px] font-semibold">Faran</span>
+              <span className="font-serif text-[21px] font-semibold">JobBot</span>
             </>
           )}
         </Link>

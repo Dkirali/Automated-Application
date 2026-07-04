@@ -20,5 +20,6 @@ export { StepIndicator } from "./StepIndicator";
 export type { StepIndicatorProps } from "./StepIndicator";
 export { SplitScreenLayout } from "./SplitScreenLayout";
 export type { SplitScreenLayoutProps } from "./SplitScreenLayout";
+export { OnboardingAside } from "./OnboardingAside";
 export { FitScoreBar, ScoreCompare } from "./Scores";
 export type { FitScoreBarProps, ScoreCompareProps } from "./Scores";
