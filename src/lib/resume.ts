@@ -1220,7 +1220,7 @@ async function callProvider(
   return null;
 }
 
-async function callLlm(
+export async function callLlm(
   prompt: string,
   maxTokens: number = 2048,
   validate?: (text: string) => { ok: true } | { ok: false; errors: string[] },
@@ -1683,7 +1683,7 @@ export async function tailorResume(
   };
 }
 
-function extractJsonObject(text: string): unknown | null {
+export function extractJsonObject(text: string): unknown | null {
   const cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
@@ -1697,7 +1697,7 @@ function extractJsonObject(text: string): unknown | null {
 
 // Like extractJsonObject but for the top-level array returned by the batch
 // fit prompt. Tolerates code fences and surrounding prose.
-function extractJsonArray(text: string): unknown[] | null {
+export function extractJsonArray(text: string): unknown[] | null {
   const cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
   const start = cleaned.indexOf("[");
   const end = cleaned.lastIndexOf("]");
