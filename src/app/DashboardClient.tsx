@@ -195,6 +195,18 @@ export default function DashboardClient({
     };
   }, [alertsEnabled]);
 
+  // Prefill the campaign titles from a Resume-doctor "Use in campaign" handoff (?titles=).
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("titles");
+    if (!t) return;
+    const el = document.getElementById("titles") as HTMLInputElement | null;
+    if (el) {
+      el.value = t;
+      el.focus();
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, []);
+
   // Poll status
   useEffect(() => {
     const interval = setInterval(() => {
@@ -376,6 +388,9 @@ export default function DashboardClient({
             </button>
           )}
         </span>
+        <Link href="/resume" className="text-cream hover:no-underline hover:opacity-80">
+          Resume
+        </Link>
         <Link href="/settings" className="text-cream hover:no-underline hover:opacity-80">
           Settings
         </Link>
@@ -955,6 +970,7 @@ export default function DashboardClient({
         <PillLink href="/" active>
           Dashboard
         </PillLink>
+        <PillLink href="/resume">Resume</PillLink>
         <PillLink href="/settings">Settings</PillLink>
       </BottomNavPill>
 

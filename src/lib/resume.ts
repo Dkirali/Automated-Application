@@ -817,11 +817,16 @@ export function validateTailoredResume(
   facts: MasterResumeFacts
 ): { ok: true } | { ok: false; errors: string[] } {
   const errors: string[] = [];
-  // Compare on a normalized form: dashes unified (the output is dash-normalized
-  // but LLM-extracted facts use plain hyphens) and whitespace collapsed, so
-  // cosmetic differences don't read as date/company mismatches.
+  // Compare on a normalized form: every Unicode hyphen/dash variant collapsed to
+  // a plain "-" (e.g. the non-breaking hyphen U+2011 in "Coca‑Cola" that the LLM
+  // rewrites as a regular hyphen) and whitespace collapsed, so cosmetic
+  // differences don't read as date/company mismatches.
   const norm = (s: string) =>
-    normalizeDashes(s).toLowerCase().replace(/\s+/g, " ").trim();
+    normalizeDashes(s)
+      .replace(/[‐-―−]/g, "-") // hyphen/dash family → plain "-"
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
   const textNorm = norm(output);
 
   // 1. No REFERENCES section
@@ -1215,7 +1220,7 @@ async function callProvider(
   return null;
 }
 
-async function callLlm(
+export async function callLlm(
   prompt: string,
   maxTokens: number = 2048,
   validate?: (text: string) => { ok: true } | { ok: false; errors: string[] },
@@ -1678,7 +1683,7 @@ export async function tailorResume(
   };
 }
 
-function extractJsonObject(text: string): unknown | null {
+export function extractJsonObject(text: string): unknown | null {
   const cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
@@ -1692,7 +1697,7 @@ function extractJsonObject(text: string): unknown | null {
 
 // Like extractJsonObject but for the top-level array returned by the batch
 // fit prompt. Tolerates code fences and surrounding prose.
-function extractJsonArray(text: string): unknown[] | null {
+export function extractJsonArray(text: string): unknown[] | null {
   const cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
   const start = cleaned.indexOf("[");
   const end = cleaned.lastIndexOf("]");
