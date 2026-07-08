@@ -391,6 +391,9 @@ export default function DashboardClient({
         <Link href="/resume" className="text-cream hover:no-underline hover:opacity-80">
           Resume
         </Link>
+        <Link href="/tracker" className="text-cream hover:no-underline hover:opacity-80">
+          Tracker
+        </Link>
         <Link href="/settings" className="text-cream hover:no-underline hover:opacity-80">
           Settings
         </Link>
@@ -971,6 +974,7 @@ export default function DashboardClient({
           Dashboard
         </PillLink>
         <PillLink href="/resume">Resume</PillLink>
+        <PillLink href="/tracker">Tracker</PillLink>
         <PillLink href="/settings">Settings</PillLink>
       </BottomNavPill>
 
