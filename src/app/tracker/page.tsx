@@ -17,6 +17,7 @@ export default function TrackerPage() {
     notes: (a.notes as string) ?? "",
     ats_score: (a.ats_score as number) ?? 0,
     applied_at: (a.applied_at as string) ?? null,
+    interview_prep: (a.interview_prep as string) ?? null,
   }));
   return <TrackerClient initialApps={applications} />;
 }
