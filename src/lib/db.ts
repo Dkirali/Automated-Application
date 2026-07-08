@@ -123,6 +123,24 @@ export function initDb(): void {
   if (!usageCols.some((c) => c.name === "tokens")) {
     db.exec("ALTER TABLE api_usage ADD COLUMN tokens INTEGER DEFAULT 0");
   }
+
+  // Application tracker (Pillar 3): post-apply pipeline stage + notes + prep.
+  const trackerCols: Array<[string, string]> = [
+    ["stage", "TEXT"], // applied | screening | interview | offer | rejected
+    ["stage_updated_at", "TEXT"],
+    ["notes", "TEXT"],
+    ["interview_prep", "TEXT"], // JSON: { questions:[{q,why,answerHint}], tips:[], sourced:bool, generatedAt }
+  ];
+  const trackerHave = new Set(
+    (db.prepare("PRAGMA table_info(applications)").all() as Array<{ name: string }>).map(
+      (c) => c.name
+    )
+  );
+  for (const [name, type] of trackerCols) {
+    if (!trackerHave.has(name)) {
+      db.exec(`ALTER TABLE applications ADD COLUMN ${name} ${type}`);
+    }
+  }
 }
 
 // ── Config ──────────────────────────────────────────────────────────────
@@ -332,6 +350,44 @@ export function markApplied(appId: number): void {
       "UPDATE applications SET status='applied', applied_at=? WHERE id=?"
     )
     .run(new Date().toISOString(), appId);
+}
+
+// ── Tracker (Pillar 3) ──────────────────────────────────────────────────
+
+export const TRACKER_STAGES = [
+  "applied",
+  "screening",
+  "interview",
+  "offer",
+  "rejected",
+] as const;
+export type TrackerStage = (typeof TRACKER_STAGES)[number];
+
+// Applied jobs form the tracker; a null stage means it just landed in "applied".
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getTrackedApplications(): Record<string, any>[] {
+  return getConn()
+    .prepare(
+      "SELECT * FROM applications WHERE status='applied' ORDER BY COALESCE(stage_updated_at, applied_at, created_at) DESC"
+    )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .all() as Record<string, any>[];
+}
+
+export function updateStage(appId: number, stage: TrackerStage): void {
+  getConn()
+    .prepare("UPDATE applications SET stage=?, stage_updated_at=? WHERE id=?")
+    .run(stage, new Date().toISOString(), appId);
+}
+
+export function setApplicationNotes(appId: number, notes: string): void {
+  getConn().prepare("UPDATE applications SET notes=? WHERE id=?").run(notes, appId);
+}
+
+export function setInterviewPrep(appId: number, prepJson: string): void {
+  getConn()
+    .prepare("UPDATE applications SET interview_prep=? WHERE id=?")
+    .run(prepJson, appId);
 }
 
 // ── Manual Queue ────────────────────────────────────────────────────────

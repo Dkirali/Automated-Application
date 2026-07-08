@@ -104,6 +104,9 @@ export default function ResumeClient() {
         <Link href="/" className="text-cream hover:no-underline hover:opacity-80">
           Dashboard
         </Link>
+        <Link href="/tracker" className="text-cream hover:no-underline hover:opacity-80">
+          Tracker
+        </Link>
         <Link href="/settings" className="text-cream hover:no-underline hover:opacity-80">
           Settings
         </Link>
