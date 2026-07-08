@@ -1370,7 +1370,7 @@ function isCompanyOrRoleLine(line: string): { company?: string; role?: string; l
   return null;
 }
 
-async function writeTailoredDocx(
+export async function writeTailoredDocx(
   text: string,
   outputPath: string,
   header: CandidateHeader
