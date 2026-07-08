@@ -1,9 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { Badge, Card, TopNav } from "@/components/ui";
+import { Badge, Button, Card, TopNav } from "@/components/ui";
 import { cn } from "@/lib/cn";
+
+interface InterviewQuestion {
+  q: string;
+  why: string;
+  answerHint: string;
+}
+interface InterviewPrep {
+  questions: InterviewQuestion[];
+  tips: string[];
+  sourced: boolean;
+  sources: string[];
+  generatedAt: string;
+}
 
 interface TrackedApp {
   id: number;
@@ -14,6 +27,7 @@ interface TrackedApp {
   notes: string;
   ats_score: number;
   applied_at: string | null;
+  interview_prep: string | null;
 }
 
 const STAGES: { key: string; label: string }[] = [
@@ -34,6 +48,7 @@ const STAGE_TONE: Record<string, "green" | "orange" | "neutral" | "ink"> = {
 
 export default function TrackerClient({ initialApps }: { initialApps: TrackedApp[] }) {
   const [apps, setApps] = useState<TrackedApp[]>(initialApps);
+  const [prepFor, setPrepFor] = useState<TrackedApp | null>(null);
 
   const byStage = useMemo(() => {
     const map: Record<string, TrackedApp[]> = {};
@@ -116,6 +131,7 @@ export default function TrackerClient({ initialApps }: { initialApps: TrackedApp
                       app={a}
                       onMove={(stage) => moveStage(a.id, stage)}
                       onSaveNotes={(notes) => saveNotes(a.id, notes)}
+                      onPrep={() => setPrepFor(a)}
                     />
                   ))}
                 </div>
@@ -124,6 +140,8 @@ export default function TrackerClient({ initialApps }: { initialApps: TrackedApp
           </div>
         )}
       </main>
+
+      {prepFor && <PrepModal app={prepFor} onClose={() => setPrepFor(null)} />}
     </div>
   );
 }
@@ -132,10 +150,12 @@ function TrackerCard({
   app,
   onMove,
   onSaveNotes,
+  onPrep,
 }: {
   app: TrackedApp;
   onMove: (stage: string) => void;
   onSaveNotes: (notes: string) => void;
+  onPrep: () => void;
 }) {
   const [notes, setNotes] = useState(app.notes);
   const [open, setOpen] = useState(false);
@@ -165,13 +185,22 @@ function TrackerCard({
         ))}
       </select>
 
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="mt-2 text-[11.5px] font-semibold text-accent hover:underline"
-      >
-        {open ? "Hide notes" : app.notes ? "Notes ●" : "Add notes"}
-      </button>
+      <div className="mt-2 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="text-[11.5px] font-semibold text-accent hover:underline"
+        >
+          {open ? "Hide notes" : app.notes ? "Notes ●" : "Add notes"}
+        </button>
+        <button
+          type="button"
+          onClick={onPrep}
+          className="text-[11.5px] font-semibold text-accent hover:underline"
+        >
+          {app.interview_prep ? "Interview prep ●" : "Interview prep"}
+        </button>
+      </div>
       {open && (
         <div className="mt-2">
           <textarea
@@ -194,6 +223,152 @@ function TrackerCard({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function PrepModal({ app, onClose }: { app: TrackedApp; onClose: () => void }) {
+  const initial: InterviewPrep | null = app.interview_prep
+    ? (() => {
+        try {
+          return JSON.parse(app.interview_prep) as InterviewPrep;
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+  const [prep, setPrep] = useState<InterviewPrep | null>(initial);
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+
+  const generate = useCallback(async () => {
+    setState("loading");
+    try {
+      const res = await fetch("/api/interview/prep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: app.id }),
+      });
+      const body = await res.json();
+      if (body.ok) {
+        setPrep(body.prep);
+        setState("idle");
+      } else {
+        setState("error");
+      }
+    } catch {
+      setState("error");
+    }
+  }, [app.id]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[85vh] w-full max-w-2xl overflow-auto rounded-card border border-line bg-card p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="font-serif text-[21px] font-semibold text-ink">
+              Interview prep
+            </div>
+            <div className="text-[13px] text-muted">
+              {app.title} · {app.company}
+            </div>
+          </div>
+          <button
+            className="text-[18px] text-muted hover:text-ink"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <Button variant="accent" size="sm" onClick={generate} disabled={state === "loading"}>
+            {state === "loading"
+              ? "Preparing…"
+              : prep
+                ? "↻ Regenerate"
+                : "Generate prep"}
+          </Button>
+          {prep && (
+            <Badge tone={prep.sourced ? "green" : "neutral"}>
+              {prep.sourced ? "web-sourced" : "AI-generated"}
+            </Badge>
+          )}
+          {state === "error" && (
+            <span className="text-[12.5px] text-accent-strong">
+              Couldn&apos;t generate prep — try again.
+            </span>
+          )}
+        </div>
+
+        {!prep && state !== "loading" && (
+          <p className="text-[13px] text-muted">
+            Generate likely questions and tailored answer angles for this role.
+          </p>
+        )}
+
+        {prep && (
+          <div className="flex flex-col gap-4">
+            {prep.tips.length > 0 && (
+              <div className="rounded-xl bg-input p-3">
+                <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.06em] text-muted">
+                  Tips
+                </div>
+                <ul className="list-disc pl-5 text-[13px] text-ink">
+                  {prep.tips.map((t, i) => (
+                    <li key={i}>{t}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <ol className="flex flex-col gap-3">
+              {prep.questions.map((q, i) => (
+                <li key={i} className="rounded-card border border-line p-3">
+                  <div className="text-[14px] font-semibold text-ink">
+                    {i + 1}. {q.q}
+                  </div>
+                  {q.why && (
+                    <div className="mt-1 text-[12px] text-muted">
+                      <span className="font-semibold">Why: </span>
+                      {q.why}
+                    </div>
+                  )}
+                  {q.answerHint && (
+                    <div className="mt-1 text-[12.5px] text-ink">
+                      <span className="font-semibold text-accent">Approach: </span>
+                      {q.answerHint}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ol>
+            {prep.sourced && prep.sources.length > 0 && (
+              <div className="text-[11.5px] text-muted">
+                Sources:{" "}
+                {prep.sources.slice(0, 5).map((u, i) => (
+                  <a
+                    key={i}
+                    href={u}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mr-2 underline"
+                  >
+                    [{i + 1}]
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
