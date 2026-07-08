@@ -3,8 +3,10 @@
 import {
   callLlm,
   extractJsonObject,
+  getActiveModel,
   getFastModel,
   parseCandidateHeader,
+  validateTailoredResume,
   type MasterResumeFacts,
 } from "./resume";
 import { calculateParseability } from "./fit-scoring";
@@ -145,6 +147,66 @@ export async function suggestRoles(
 /** Header contact fields, reused for display (name/email/etc.). */
 export function candidateName(resumeText: string, facts: MasterResumeFacts): string | undefined {
   return parseCandidateHeader(resumeText, facts).name;
+}
+
+// Canonical facts the rewrite must preserve verbatim (dates, employers, schools).
+function groundTruth(facts: MasterResumeFacts): string {
+  const roles = [...facts.roles, ...facts.additionalRoles]
+    .map((r) => `- ${r.role} | ${r.company} | ${r.location} | ${r.dates}`)
+    .join("\n");
+  const edu = facts.education
+    .map((e) => `- ${e.degree} | ${e.school} | ${e.location} | ${e.dates}`)
+    .join("\n");
+  return [
+    `ROLES (company, dates must stay EXACT):\n${roles || "(none)"}`,
+    `EDUCATION:\n${edu || "(none)"}`,
+    facts.languages.length ? `LANGUAGES: ${facts.languages.join(", ")}` : "",
+    facts.certificates.length ? `CERTIFICATES: ${facts.certificates.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+const IMPROVE_PROMPT = `You are an expert resume writer. Rewrite the RESUME below to meet strong general + ATS standards: punchy action verbs, quantified impact, concise scannable bullets, consistent tense/formatting, and clear sections. Improve wording ONLY — never invent employers, titles, dates, schools, degrees, metrics, or achievements that aren't supported by the original.
+
+Hard rules:
+- Preserve every canonical fact in GROUND TRUTH exactly (company names, roles, locations, date ranges, schools, degrees, languages). Use en-dashes (–) in date ranges.
+- Include ALL of these section headings verbatim, each on its own line, in caps: PROFESSIONAL EXPERIENCE, ADDITIONAL EXPERIENCE, EDUCATION, SKILLS, CERTIFICATES, LANGUAGES. If the original has no additional roles, still include the ADDITIONAL EXPERIENCE heading (it may sit above SKILLS with the original's secondary roles, or empty).
+- Do NOT add a REFERENCES section. Do NOT invent numbers.
+- Output ONLY the resume body, starting exactly with the line "PROFESSIONAL EXPERIENCE". No preamble, no commentary, no markdown fences.
+
+GROUND TRUTH:
+{ground_truth}
+
+RESUME:
+"""
+{resume}
+"""`;
+
+export interface ImprovedResume {
+  text: string; // improved resume body (starts at PROFESSIONAL EXPERIENCE)
+}
+
+/**
+ * Rewrite the resume to stronger standards while preserving canonical facts.
+ * Uses the flagship model and the existing fact-integrity validator (re-prompts
+ * until the rewrite keeps every company/date/school/language).
+ */
+export async function improveResume(
+  resumeText: string,
+  facts: MasterResumeFacts
+): Promise<ImprovedResume> {
+  const prompt = IMPROVE_PROMPT.replace("{ground_truth}", groundTruth(facts)).replace(
+    "{resume}",
+    resumeText.slice(0, 9000)
+  );
+  const text = await callLlm(
+    prompt,
+    2200,
+    (out) => validateTailoredResume(out, facts),
+    getActiveModel() ?? undefined
+  );
+  return { text: text.trim() };
 }
 
 function clampScore(n: unknown, fallback: number): number {

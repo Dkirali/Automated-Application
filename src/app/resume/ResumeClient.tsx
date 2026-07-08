@@ -31,6 +31,7 @@ const REASON_COPY: Record<string, string> = {
   resume_empty: "Your resume file appears to be empty.",
   rate_limited: "AI is rate-limited right now — try again shortly.",
   analysis_failed: "Analysis failed — please try again.",
+  improve_failed: "Couldn't rewrite the resume — please try again.",
 };
 
 const SEV_TONE: Record<Severity, "orange" | "neutral"> = {
@@ -48,6 +49,11 @@ const MATCH_TONE = {
 export default function ResumeClient() {
   const [state, setState] = useState<"loading" | "done" | "error">("loading");
   const [data, setData] = useState<AnalyzeResponse | null>(null);
+  const [improve, setImprove] = useState<{
+    state: "idle" | "loading" | "done" | "error";
+    text?: string;
+    reason?: string;
+  }>({ state: "idle" });
 
   // Fetch results; only touches state after the await so it's safe to call
   // from the mount effect (no synchronous setState in an effect).
@@ -68,6 +74,21 @@ export default function ResumeClient() {
     setData(null);
     void load(true); // force a fresh run
   }, [load]);
+
+  const runImprove = useCallback(async () => {
+    setImprove({ state: "loading" });
+    try {
+      const res = await fetch("/api/resume/improve", { method: "POST" });
+      const body = await res.json();
+      setImprove(
+        body.ok
+          ? { state: "done", text: body.text }
+          : { state: "error", reason: body.reason }
+      );
+    } catch {
+      setImprove({ state: "error", reason: "improve_failed" });
+    }
+  }, []);
 
   useEffect(() => {
     // Fetch-on-mount (uses server-side cache); state is set only after the await.
@@ -208,6 +229,62 @@ export default function ResumeClient() {
                     </li>
                   ))}
                 </ul>
+              )}
+            </Card>
+
+            {/* Improve / rewrite */}
+            <Card>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <SectionTitle as="label">Improve my resume</SectionTitle>
+                  <p className="mt-1 text-[12.5px] text-muted">
+                    Rewrite to stronger standards (impact, action verbs, concise
+                    bullets) — your employers, dates, and schools are preserved.
+                  </p>
+                </div>
+                {improve.state !== "done" && (
+                  <Button
+                    variant="accent"
+                    onClick={runImprove}
+                    disabled={improve.state === "loading"}
+                  >
+                    {improve.state === "loading" ? "Rewriting…" : "✨ Rewrite my resume"}
+                  </Button>
+                )}
+              </div>
+
+              {improve.state === "loading" && (
+                <div className="mt-4 flex items-center gap-3 text-[13px] text-muted">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-line border-t-accent" />
+                  Rewriting with the flagship model… ~30–60 seconds.
+                </div>
+              )}
+              {improve.state === "error" && (
+                <p className="mt-4 text-[13px] text-accent-strong">
+                  {REASON_COPY[improve.reason ?? "improve_failed"] ??
+                    "Couldn't rewrite the resume."}
+                </p>
+              )}
+              {improve.state === "done" && improve.text && (
+                <div className="mt-4">
+                  <div className="mb-3 flex flex-wrap items-center gap-3">
+                    <a
+                      href="/api/resume/download-improved"
+                      className="inline-flex items-center rounded-btn bg-accent px-4 py-2 text-[13px] font-bold text-white hover:no-underline"
+                    >
+                      ↓ Download .docx
+                    </a>
+                    <Button variant="outline" size="sm" onClick={runImprove}>
+                      ↻ Rewrite again
+                    </Button>
+                    <span className="text-[12px] text-muted">
+                      Review before use — AI rewrites can drift.
+                    </span>
+                  </div>
+                  <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-input p-4 font-sans text-[12.5px] leading-[1.55] text-ink">
+                    {improve.text}
+                  </pre>
+                </div>
               )}
             </Card>
 
